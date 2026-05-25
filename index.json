@@ -1,7 +1,22 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-25T10:00:00Z",
+  "updated_at": "2026-05-25T15:00:00Z",
   "apps": [
+    {
+      "name": "blackjack",
+      "version": "1.0.0",
+      "author": "buscar",
+      "description": "Blackjack 21. Buttons on the phone, cards on the e-ink.",
+      "long_description": "Single-deck blackjack. Dealer stands on all 17s. Casual mode is just Deal/Hit/Stand with a lifetime W/L/P counter. Flip 'Play for chips' to add a bank (starts at $100), bet selection, and Double Down. State persists across restarts; mid-hand RAM only.",
+      "category": "fun",
+      "requires": { "permissions": [], "secrets": [] },
+      "files": {
+        "py":       "apps/blackjack/blackjack.py",
+        "manifest": "apps/blackjack/blackjack.manifest.json",
+        "ui":       "apps/blackjack/blackjack.ui.json"
+      },
+      "size_bytes": 15913
+    },
     {
       "name": "hello",
       "version": "1.1.0",

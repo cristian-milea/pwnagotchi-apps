@@ -1,0 +1,55 @@
+{
+  "type": "column",
+  "padding": 16,
+  "spacing": 10,
+  "children": [
+    { "type": "text", "value": "Blackjack 21", "style": "headline" },
+    { "type": "text", "style": "caption",
+      "value": "Dealer stands on 17. Cards are on the e-ink." },
+
+    { "type": "switch", "local": "bets_on", "label": "Play for chips",
+      "default": false,
+      "action_on":  { "type": "push", "payload": { "action": "set_bets_on", "value": true  } },
+      "action_off": { "type": "push", "payload": { "action": "set_bets_on", "value": false } } },
+
+    { "type": "select", "local": "bet", "label": "Bet",
+      "default": "10",
+      "options": [
+        { "value": "5",  "label": "$5"  },
+        { "value": "10", "label": "$10" },
+        { "value": "25", "label": "$25" },
+        { "value": "50", "label": "$50" }
+      ] },
+
+    { "type": "button", "label": "Deal", "style": "primary",
+      "action": { "type": "push",
+        "payload": { "action": "deal", "bet": "{{local.bet}}", "bets_on": "{{local.bets_on}}" } } },
+
+    { "type": "row", "spacing": 8, "children": [
+      { "type": "button", "label": "Hit", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "hit" } } },
+      { "type": "button", "label": "Stand", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "stand" } } },
+      { "type": "button", "label": "Double", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "double" } } }
+    ] },
+
+    { "type": "divider" },
+
+    { "type": "state_text", "binding": "status",
+      "format": "Status: {}", "style": "body" },
+    { "type": "state_text", "binding": "last_result",
+      "default": "", "style": "caption" },
+    { "type": "state_text", "binding": "bank",
+      "format": "Bank: ${}", "style": "caption" },
+    { "type": "row", "spacing": 12, "children": [
+      { "type": "state_text", "binding": "wins",   "format": "W {}", "style": "caption" },
+      { "type": "state_text", "binding": "losses", "format": "L {}", "style": "caption" },
+      { "type": "state_text", "binding": "pushes", "format": "P {}", "style": "caption" },
+      { "type": "state_text", "binding": "hands",  "format": "· #{}", "style": "caption" }
+    ] },
+
+    { "type": "button", "label": "Reset bank to $100", "style": "secondary",
+      "action": { "type": "push", "payload": { "action": "reset_bank" } } }
+  ]
+}
