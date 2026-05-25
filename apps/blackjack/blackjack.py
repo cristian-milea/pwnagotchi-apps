@@ -89,9 +89,16 @@ def _fresh_deck():
 class Blackjack:
     name = "blackjack"
     icon = "BJ"
-    version = "1.0.1"
+    version = "1.0.2"
 
     # Phase strings: "idle", "player", "dealer", "done"
+    #
+    # interval_seconds: host re-renders every N seconds while set. We use this
+    # to animate the dealer drawing one card per tick — the rest of the game
+    # is push-driven (interval=None).
+    interval_seconds = None
+    DEALER_TICK = 1.0
+
     def __init__(self):
         s = _load_state(STATE_PATH)
         self._bank = int(s.get("bank", START_BANK))
@@ -202,15 +209,25 @@ class Blackjack:
             self._stand()
 
     def _stand(self):
+        # Enter dealer phase — actual draws happen one-per-render-tick in
+        # _dealer_step so the user sees the dealer flip and draw on the e-ink.
         self._phase = "dealer"
         self._status = "Dealer plays"
-        # Dealer hits to 17 (stands on all 17s including soft).
-        while True:
-            total = _hand_total(self._dealer)
-            if total >= 17:
-                break
+        self.interval_seconds = self.DEALER_TICK
+
+    def _dealer_step(self):
+        # Called from render() while phase=="dealer". Draws one card per tick;
+        # when the dealer is done (>=17 or busted), settles and clears the
+        # tick so the host goes back to push-driven painting.
+        if self._phase != "dealer":
+            return
+        total = _hand_total(self._dealer)
+        if total < 17:
             self._deal_card(self._dealer)
+            return
+        # Done drawing — resolve.
         self._phase = "done"
+        self.interval_seconds = None
         d_total = _hand_total(self._dealer)
         p_total = _hand_total(self._player)
         if d_total > 21 or p_total > d_total:
@@ -299,9 +316,15 @@ class Blackjack:
 
     # ---- e-ink rendering ----
     def render(self, draw, w, h):
+        # Advance dealer animation before drawing so each tick paints the
+        # next frame.
+        if self._phase == "dealer":
+            self._dealer_step()
+
         title = ImageFont.truetype("DejaVuSansMono-Bold", 10)
         small = ImageFont.truetype("DejaVuSansMono-Bold", 8)
-        label = ImageFont.truetype("DejaVuSansMono-Bold", 9)
+        name_font = ImageFont.truetype("DejaVuSansMono-Bold", 10)
+        total_font = ImageFont.truetype("DejaVuSansMono-Bold", 16)
 
         # Title bar
         draw.text((2, 1), "BLACKJACK", font=title, fill=0)
@@ -339,33 +362,30 @@ class Blackjack:
         p_total = _hand_total(self._player) if self._player else 0
 
         self._draw_row(draw, "Dealer", d_total, self._dealer,
-                       dealer_y, half, w, label,
+                       dealer_y, half, w, name_font, total_font,
                        hide_index=(1 if hide_hole else None),
                        hide_total=hide_hole)
         self._draw_row(draw, "You", p_total, self._player,
-                       player_y, half, w, label,
+                       player_y, half, w, name_font, total_font,
                        hide_index=None, hide_total=False)
 
-    def _draw_row(self, draw, who, total, cards, y, h, w, font,
-                  hide_index, hide_total):
-        # Label line ("Dealer: 17"), then a row of card glyphs underneath.
-        # While the hole card is hidden we don't show a number — the visible
-        # up-card alone isn't the hand total, and showing it would mislead.
-        if not cards:
-            label_text = who
-        elif hide_total:
-            label_text = who
-        else:
-            label_text = f"{who}: {total}"
-        draw.text((2, y), label_text, font=font, fill=0)
+    def _draw_row(self, draw, who, total, cards, y, h, w, name_font,
+                  total_font, hide_index, hide_total):
+        # Stacked label column on the left: name on top, big total below.
+        # Total is hidden while the dealer's hole card is still down.
+        draw.text((2, y + 1), who, font=name_font, fill=0)
+        show_total = cards and not hide_total
+        if show_total:
+            t_text = str(total)
+            draw.text((2, y + 14), t_text, font=total_font, fill=0)
 
         if not cards:
             return
 
-        # Card size and layout
-        card_w, card_h = 20, 26
+        # Cards: ~30% larger than v1.0.1 (was 20x26 → now 26x34).
+        card_w, card_h = 26, 34
         gap = 3
-        cards_left = 64
+        cards_left = 48
         max_cards = max(1, (w - cards_left - 2) // (card_w + gap))
         visible = cards[:max_cards]
         for i, (rank, suit) in enumerate(visible):
@@ -375,24 +395,19 @@ class Blackjack:
                 self._draw_card_back(draw, cx, cy, card_w, card_h)
             else:
                 self._draw_card(draw, cx, cy, card_w, card_h, rank, suit)
-        # Overflow indicator
         if len(cards) > max_cards:
             more = f"+{len(cards) - max_cards}"
             mx = cards_left + max_cards * (card_w + gap)
-            draw.text((mx, y + h // 2 - 4), more, font=font, fill=0)
+            draw.text((mx, y + h // 2 - 4), more, font=name_font, fill=0)
 
     def _draw_card(self, draw, x, y, cw, ch, rank, suit):
-        # Outline
         draw.rectangle((x, y, x + cw - 1, y + ch - 1), outline=0, fill=1)
-        rank_font = ImageFont.truetype("DejaVuSansMono-Bold", 9)
-        suit_font = ImageFont.truetype("DejaVuSansMono-Bold", 11)
-        # Rank top-left (use "10" or first char)
-        r_text = rank if rank != "10" else "10"
-        draw.text((x + 2, y + 1), r_text, font=rank_font, fill=0)
-        # Suit centered
+        rank_font = ImageFont.truetype("DejaVuSansMono-Bold", 12)
+        suit_font = ImageFont.truetype("DejaVuSansMono-Bold", 14)
+        draw.text((x + 2, y + 1), rank, font=rank_font, fill=0)
         glyph = SUIT_GLYPH.get(suit, suit)
         gw = draw.textlength(glyph, font=suit_font)
-        draw.text((x + (cw - int(gw)) // 2, y + ch - 14), glyph,
+        draw.text((x + (cw - int(gw)) // 2, y + ch - 17), glyph,
                   font=suit_font, fill=0)
 
     def _draw_card_back(self, draw, x, y, cw, ch):
