@@ -70,7 +70,7 @@ def _save_state(path, state):
 class Magic8:
     name = "magic8"
     icon = "8"
-    version = "1.1.0"
+    version = "1.3.0"
 
     def __init__(self):
         self._answer = None

@@ -1,20 +1,13 @@
 {
   "type": "column",
   "padding": 16,
-  "spacing": 12,
+  "spacing": 16,
   "children": [
-    { "type": "text", "value": "Magic 8-Ball", "style": "headline" },
-    { "type": "state_text", "binding": "last_answer",
-      "default": "Shake to ask…", "style": "title", "align": "center" },
+    { "type": "text", "style": "body",
+      "value": "Ask a yes-or-no question, then tap Shake. The answer appears on the e-ink." },
     { "type": "button", "label": "Shake", "style": "primary",
       "action": { "type": "push", "payload": { "action": "shake" } } },
-    { "type": "divider" },
-    { "type": "row", "spacing": 8, "children": [
-      { "type": "state_text", "binding": "shake_count",
-        "format": "Shaken {} times", "style": "caption" },
-      { "type": "spacer", "width": 8 },
-      { "type": "state_text", "binding": "last_shake_at",
-        "format": "Last: {}", "style": "caption" }
-    ]}
+    { "type": "state_text", "binding": "shake_count",
+      "format": "Shaken {} times so far", "style": "caption" }
   ]
 }

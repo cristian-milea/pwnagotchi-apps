@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-25T00:00:00Z",
+  "updated_at": "2026-05-25T10:00:00Z",
   "apps": [
     {
       "name": "hello",
@@ -19,10 +19,10 @@
     },
     {
       "name": "magic8",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "author": "buscar",
       "description": "Magic 8-Ball. Tap Shake for an answer.",
-      "long_description": "Classic Magic 8-Ball. Ask a yes/no question, tap Shake on the phone, and your fortune appears on the e-ink. No external dependencies.",
+      "long_description": "Classic Magic 8-Ball. Ask a yes/no question, tap Shake on the phone, and your fortune appears on the e-ink. The answer lives only on the e-ink — the phone is a remote.",
       "category": "fun",
       "requires": { "permissions": [], "secrets": [] },
       "files": {
@@ -34,33 +34,31 @@
     },
     {
       "name": "tide-sun",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "author": "buscar",
       "description": "Sunrise/sunset and moon phase.",
-      "long_description": "Shows today's sunrise and sunset times plus the current moon phase. Pulls daily sun data from Open-Meteo; moon phase is computed device-side using a Conway approximation. Tides are not yet implemented.",
+      "long_description": "Shows today's sunrise and sunset times plus the current moon phase. Pulls daily sun data from Open-Meteo; moon phase is computed device-side using a Conway approximation. Phone-side UI is just a Sync control — the e-ink is the display.",
       "category": "info",
       "requires": { "permissions": ["location"], "secrets": [] },
       "files": {
         "py":       "apps/tide-sun/tide_sun.py",
-        "manifest": "apps/tide-sun/tide_sun.manifest.json",
-        "ui":       "apps/tide-sun/tide_sun.ui.json"
+        "manifest": "apps/tide-sun/tide_sun.manifest.json"
       },
-      "size_bytes": 7678
+      "size_bytes": 6758
     },
     {
       "name": "weather",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "author": "buscar",
       "description": "Current conditions + 12h rain forecast.",
-      "long_description": "Current temperature, feels-like, and weather condition plus a 12-hour precipitation bar chart. Pulls forecast data from Open-Meteo (no API key needed). Needs your location.",
+      "long_description": "Current temperature, feels-like, and weather condition plus a 12-hour precipitation bar chart. Pulls forecast data from Open-Meteo (no API key needed). Phone-side UI is just a Sync control — the e-ink is the display.",
       "category": "info",
       "requires": { "permissions": ["location"], "secrets": [] },
       "files": {
         "py":       "apps/weather/weather.py",
-        "manifest": "apps/weather/weather.manifest.json",
-        "ui":       "apps/weather/weather.ui.json"
+        "manifest": "apps/weather/weather.manifest.json"
       },
-      "size_bytes": 8507
+      "size_bytes": 7612
     }
   ]
 }

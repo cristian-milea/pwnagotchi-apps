@@ -95,7 +95,7 @@ def _transform(envelope):
 class Weather:
     name = "weather"
     icon = "W"
-    version = "1.2.0"
+    version = "1.3.0"
     interval_seconds = 300
 
     def __init__(self):
