@@ -91,7 +91,7 @@ def _fresh_deck():
 class Blackjack:
     name = "blackjack"
     icon = "BJ"
-    version = "1.0.3"
+    version = "1.0.4"
 
     # Phase strings: "idle", "player", "dealer", "done"
     #
@@ -368,22 +368,25 @@ class Blackjack:
         name_font = self._font(10)
         total_font = self._font(16)
 
-        # Title bar
+        # Title bar — name left, status right-aligned. Bank moves to the
+        # footer so the top bar stays uncluttered.
         draw.text((2, 1), "BLACKJACK", font=title, fill=0)
         status_text = status or ""
-        sw = draw.textlength(status_text, font=small)
-        draw.text(((w - int(sw)) // 2, 3), status_text, font=small, fill=0)
-        if bets_on:
-            bank_text = f"${bank}"
-            bw = draw.textlength(bank_text, font=small)
-            draw.text((w - int(bw) - 2, 3), bank_text, font=small, fill=0)
+        if status_text:
+            sw = draw.textlength(status_text, font=small)
+            draw.text((w - int(sw) - 2, 3), status_text, font=small, fill=0)
         draw.line((2, 12, w - 2, 12), fill=0)
 
-        # Footer band (bet/result + hand count)
+        # Footer band (bet · bank when betting, else last result / stats; #hands)
         footer_top = h - 10
         draw.line((2, footer_top - 1, w - 2, footer_top - 1), fill=0)
-        if bets_on and phase != "idle":
-            left = f"Bet ${bet}" if bet else last_result
+        if bets_on:
+            if phase in ("player", "dealer") and bet:
+                left = f"Bet ${bet}  Bank ${bank}"
+            else:
+                left = f"Bank ${bank}"
+                if last_result:
+                    left = f"{last_result}  Bank ${bank}"
         else:
             left = last_result or f"W{wins} L{losses} P{pushes}"
         draw.text((2, footer_top), left, font=small, fill=0)
@@ -403,44 +406,82 @@ class Blackjack:
         d_total = _hand_total(dealer) if dealer else 0
         p_total = _hand_total(player) if player else 0
 
-        self._draw_row(draw, "Dealer", d_total, dealer,
+        # Winner gets their total inverted (black box, white digit) once the
+        # hand is resolved. Push leaves both un-inverted.
+        d_win = p_win = False
+        if phase == "done" and dealer and player:
+            if p_total > 21:
+                d_win = True
+            elif d_total > 21 or p_total > d_total:
+                p_win = True
+            elif d_total > p_total:
+                d_win = True
+
+        self._draw_row(draw, "DLR", d_total, dealer,
                        dealer_y, half, w, name_font, total_font,
                        hide_index=(1 if hide_hole else None),
-                       hide_total=hide_hole)
-        self._draw_row(draw, "You", p_total, player,
+                       hide_total=hide_hole, invert_total=d_win)
+        self._draw_row(draw, "YOU", p_total, player,
                        player_y, half, w, name_font, total_font,
-                       hide_index=None, hide_total=False)
+                       hide_index=None, hide_total=False, invert_total=p_win)
 
     def _draw_row(self, draw, who, total, cards, y, h, w, name_font,
-                  total_font, hide_index, hide_total):
-        # Stacked label column on the left: name on top, big total below.
-        # Total is hidden while the dealer's hole card is still down.
+                  total_font, hide_index, hide_total, invert_total):
+        # Stacked label column on the left: short name on top, big total below.
+        # Total is hidden while the dealer's hole card is still down; if the
+        # hand resolved in this side's favour we invert the digit so the
+        # winner is immediately readable from across the room.
         draw.text((2, y + 1), who, font=name_font, fill=0)
         show_total = cards and not hide_total
         if show_total:
             t_text = str(total)
-            draw.text((2, y + 14), t_text, font=total_font, fill=0)
+            t_x, t_y = 2, y + 14
+            tw = int(draw.textlength(t_text, font=total_font))
+            ascent, descent = total_font.getmetrics()
+            th = ascent + descent
+            if invert_total:
+                draw.rectangle(
+                    (t_x - 2, t_y - 1, t_x + tw + 1, t_y + th - 1),
+                    fill=0,
+                )
+                draw.text((t_x, t_y), t_text, font=total_font, fill=1)
+            else:
+                draw.text((t_x, t_y), t_text, font=total_font, fill=0)
 
         if not cards:
             return
 
-        # Cards: ~30% larger than v1.0.1 (was 20x26 → now 26x34).
+        # Card layout. If every card fits at full width, lay them out with a
+        # small gap. Otherwise overlap: the last card stays full-width and
+        # the earlier ones each show only a thin left strip (rank + suit
+        # stacked top-left), as if peeking out from under the next card.
         card_w, card_h = 26, 34
         gap = 3
-        cards_left = 48
-        max_cards = max(1, (w - cards_left - 2) // (card_w + gap))
-        visible = cards[:max_cards]
-        for i, (rank, suit) in enumerate(visible):
-            cx = cards_left + i * (card_w + gap)
-            cy = y + (h - card_h) // 2
+        cards_left = 30  # 3-char label fits in ~22 px
+        right_pad = 2
+        available = w - cards_left - right_pad
+        n = len(cards)
+
+        full_width_needed = n * card_w + max(0, n - 1) * gap
+        if full_width_needed <= available or n <= 1:
+            step = card_w + gap
+        else:
+            # Compact mode: distribute the slack across the n-1 covered cards.
+            # min_step keeps the rank + suit corner readable even when crowded.
+            min_step = 8
+            step = max(min_step, (available - card_w) // (n - 1))
+
+        cy = y + (h - card_h) // 2
+        for i, (rank, suit) in enumerate(cards):
+            cx = cards_left + i * step
+            is_covered = (i < n - 1) and (step < card_w + gap)
             if hide_index is not None and i == hide_index:
                 self._draw_card_back(draw, cx, cy, card_w, card_h)
+            elif is_covered:
+                self._draw_card_compact(draw, cx, cy, card_w, card_h,
+                                        rank, suit)
             else:
                 self._draw_card(draw, cx, cy, card_w, card_h, rank, suit)
-        if len(cards) > max_cards:
-            more = f"+{len(cards) - max_cards}"
-            mx = cards_left + max_cards * (card_w + gap)
-            draw.text((mx, y + h // 2 - 4), more, font=name_font, fill=0)
 
     def _draw_card(self, draw, x, y, cw, ch, rank, suit):
         draw.rectangle((x, y, x + cw - 1, y + ch - 1), outline=0, fill=1)
@@ -451,6 +492,18 @@ class Blackjack:
         gw = draw.textlength(glyph, font=suit_font)
         draw.text((x + (cw - int(gw)) // 2, y + ch - 17), glyph,
                   font=suit_font, fill=0)
+
+    def _draw_card_compact(self, draw, x, y, cw, ch, rank, suit):
+        # Drawn full-size; the next card painted to the right of us will
+        # overwrite our right portion (its fill=1 background covers us). All
+        # we need to render is what shows in the visible left strip: rank on
+        # top, suit underneath.
+        draw.rectangle((x, y, x + cw - 1, y + ch - 1), outline=0, fill=1)
+        rank_font = self._font(10)
+        suit_font = self._font(10)
+        draw.text((x + 1, y + 1), rank, font=rank_font, fill=0)
+        glyph = SUIT_GLYPH.get(suit, suit)
+        draw.text((x + 1, y + 12), glyph, font=suit_font, fill=0)
 
     def _draw_card_back(self, draw, x, y, cw, ch):
         draw.rectangle((x, y, x + cw - 1, y + ch - 1), outline=0, fill=1)
