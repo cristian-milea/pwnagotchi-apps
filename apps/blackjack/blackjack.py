@@ -18,8 +18,10 @@
 # Mid-hand state is RAM-only — power loss aborts the hand, bank survives.
 
 import json
+import logging
 import os
 import random
+import threading
 
 from PIL import ImageFont
 
@@ -89,7 +91,7 @@ def _fresh_deck():
 class Blackjack:
     name = "blackjack"
     icon = "BJ"
-    version = "1.0.2"
+    version = "1.0.3"
 
     # Phase strings: "idle", "player", "dealer", "done"
     #
@@ -97,7 +99,7 @@ class Blackjack:
     # to animate the dealer drawing one card per tick — the rest of the game
     # is push-driven (interval=None).
     interval_seconds = None
-    DEALER_TICK = 1.0
+    DEALER_TICK = 1.5
 
     def __init__(self):
         s = _load_state(STATE_PATH)
@@ -115,6 +117,16 @@ class Blackjack:
         self._phase = "idle"
         self._status = "Tap Deal"
         self._last_result = ""
+
+        # on_data runs on a request thread; render + _dealer_step run on the
+        # pwn-apps render thread. Lock anything that touches game state so a
+        # mid-render mutation can't hand a half-built list to PIL.
+        self._lock = threading.RLock()
+
+        # Font cache — re-creating ImageFont.truetype on every paint adds up
+        # fast during the 1Hz dealer animation and was implicated in the
+        # silent-crash report on device.
+        self._fonts = {}
 
     # ---- persistence ----
     def _persist(self):
@@ -272,33 +284,34 @@ class Blackjack:
     # ---- host hooks ----
     def on_data(self, payload):
         action = (payload or {}).get("action")
-        if action == "deal":
-            if self._phase in ("idle", "done"):
-                # bets_on comes from persisted state (set by the switch's
-                # set_bets_on action). Don't read it from the deal payload —
-                # the phone serializes template values as strings, and
-                # bool("false") is True, so a payload-driven flag would
-                # ignore the toggle.
-                self._start_hand(payload.get("bet", 0), self._bets_on)
-            return True
-        if action == "hit":
-            self._player_hit()
-            return True
-        if action == "stand":
-            if self._phase == "player":
-                self._stand()
-            return True
-        if action == "double":
-            self._player_double()
-            return True
-        if action == "reset_bank":
-            self._bank = START_BANK
-            self._persist()
-            return True
-        if action == "set_bets_on":
-            self._bets_on = bool(payload.get("value", False))
-            self._persist()
-            return True
+        with self._lock:
+            if action == "deal":
+                if self._phase in ("idle", "done"):
+                    # bets_on comes from persisted state (set by the switch's
+                    # set_bets_on action). Don't read it from the deal payload
+                    # — the phone serializes template values as strings, and
+                    # bool("false") is True, so a payload-driven flag would
+                    # ignore the toggle.
+                    self._start_hand(payload.get("bet", 0), self._bets_on)
+                return True
+            if action == "hit":
+                self._player_hit()
+                return True
+            if action == "stand":
+                if self._phase == "player":
+                    self._stand()
+                return True
+            if action == "double":
+                self._player_double()
+                return True
+            if action == "reset_bank":
+                self._bank = START_BANK
+                self._persist()
+                return True
+            if action == "set_bets_on":
+                self._bets_on = bool(payload.get("value", False))
+                self._persist()
+                return True
         return False
 
     def published_state(self):
@@ -314,38 +327,67 @@ class Blackjack:
             "hands": self._hands,
         }
 
+    def _font(self, size):
+        f = self._fonts.get(size)
+        if f is None:
+            f = ImageFont.truetype("DejaVuSansMono-Bold", size)
+            self._fonts[size] = f
+        return f
+
     # ---- e-ink rendering ----
     def render(self, draw, w, h):
-        # Advance dealer animation before drawing so each tick paints the
-        # next frame.
-        if self._phase == "dealer":
-            self._dealer_step()
+        # Advance dealer animation, then snapshot everything we need to draw
+        # under the lock. After the snapshot we touch only locals, so an
+        # on_data call from another thread can't mutate state mid-paint.
+        with self._lock:
+            if self._phase == "dealer":
+                try:
+                    self._dealer_step()
+                except Exception:
+                    # A render-time bug must not wedge the dealer phase
+                    # forever. Force back to "done", clear the tick, log, and
+                    # paint the current state.
+                    logging.exception("blackjack: dealer step failed")
+                    self._phase = "done"
+                    self._status = "Error — tap Deal"
+                    self.interval_seconds = None
+            phase = self._phase
+            status = self._status
+            bets_on = self._bets_on
+            bank = self._bank
+            bet = self._bet
+            last_result = self._last_result
+            wins, losses, pushes, hands = (
+                self._wins, self._losses, self._pushes, self._hands
+            )
+            dealer = list(self._dealer)
+            player = list(self._player)
 
-        title = ImageFont.truetype("DejaVuSansMono-Bold", 10)
-        small = ImageFont.truetype("DejaVuSansMono-Bold", 8)
-        name_font = ImageFont.truetype("DejaVuSansMono-Bold", 10)
-        total_font = ImageFont.truetype("DejaVuSansMono-Bold", 16)
+        title = self._font(10)
+        small = self._font(8)
+        name_font = self._font(10)
+        total_font = self._font(16)
 
         # Title bar
         draw.text((2, 1), "BLACKJACK", font=title, fill=0)
-        status = self._status or ""
-        sw = draw.textlength(status, font=small)
-        draw.text(((w - int(sw)) // 2, 3), status, font=small, fill=0)
-        if self._bets_on:
-            bank = f"${self._bank}"
-            bw = draw.textlength(bank, font=small)
-            draw.text((w - int(bw) - 2, 3), bank, font=small, fill=0)
+        status_text = status or ""
+        sw = draw.textlength(status_text, font=small)
+        draw.text(((w - int(sw)) // 2, 3), status_text, font=small, fill=0)
+        if bets_on:
+            bank_text = f"${bank}"
+            bw = draw.textlength(bank_text, font=small)
+            draw.text((w - int(bw) - 2, 3), bank_text, font=small, fill=0)
         draw.line((2, 12, w - 2, 12), fill=0)
 
         # Footer band (bet/result + hand count)
         footer_top = h - 10
         draw.line((2, footer_top - 1, w - 2, footer_top - 1), fill=0)
-        if self._bets_on and self._phase != "idle":
-            left = f"Bet ${self._bet}" if self._bet else self._last_result
+        if bets_on and phase != "idle":
+            left = f"Bet ${bet}" if bet else last_result
         else:
-            left = self._last_result or f"W{self._wins} L{self._losses} P{self._pushes}"
+            left = last_result or f"W{wins} L{losses} P{pushes}"
         draw.text((2, footer_top), left, font=small, fill=0)
-        right = f"#{self._hands}"
+        right = f"#{hands}"
         rw = draw.textlength(right, font=small)
         draw.text((w - int(rw) - 2, footer_top), right, font=small, fill=0)
 
@@ -357,15 +399,15 @@ class Blackjack:
         player_y = area_top + half
 
         # Hide dealer hole card (and total) while the player is still acting.
-        hide_hole = (self._phase == "player")
-        d_total = _hand_total(self._dealer) if self._dealer else 0
-        p_total = _hand_total(self._player) if self._player else 0
+        hide_hole = (phase == "player")
+        d_total = _hand_total(dealer) if dealer else 0
+        p_total = _hand_total(player) if player else 0
 
-        self._draw_row(draw, "Dealer", d_total, self._dealer,
+        self._draw_row(draw, "Dealer", d_total, dealer,
                        dealer_y, half, w, name_font, total_font,
                        hide_index=(1 if hide_hole else None),
                        hide_total=hide_hole)
-        self._draw_row(draw, "You", p_total, self._player,
+        self._draw_row(draw, "You", p_total, player,
                        player_y, half, w, name_font, total_font,
                        hide_index=None, hide_total=False)
 
@@ -402,8 +444,8 @@ class Blackjack:
 
     def _draw_card(self, draw, x, y, cw, ch, rank, suit):
         draw.rectangle((x, y, x + cw - 1, y + ch - 1), outline=0, fill=1)
-        rank_font = ImageFont.truetype("DejaVuSansMono-Bold", 12)
-        suit_font = ImageFont.truetype("DejaVuSansMono-Bold", 14)
+        rank_font = self._font(12)
+        suit_font = self._font(14)
         draw.text((x + 2, y + 1), rank, font=rank_font, fill=0)
         glyph = SUIT_GLYPH.get(suit, suit)
         gw = draw.textlength(glyph, font=suit_font)
