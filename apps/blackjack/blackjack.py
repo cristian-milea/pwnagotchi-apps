@@ -89,7 +89,7 @@ def _fresh_deck():
 class Blackjack:
     name = "blackjack"
     icon = "BJ"
-    version = "1.0.0"
+    version = "1.0.1"
 
     # Phase strings: "idle", "player", "dealer", "done"
     def __init__(self):
@@ -132,7 +132,10 @@ class Blackjack:
         self._dealer = []
         self._player = []
         if self._bets_on:
-            bet = int(bet or 0)
+            try:
+                bet = int(bet or 0)
+            except (ValueError, TypeError):
+                bet = 0
             if bet <= 0:
                 self._status = "Pick a bet"
                 return
@@ -254,7 +257,12 @@ class Blackjack:
         action = (payload or {}).get("action")
         if action == "deal":
             if self._phase in ("idle", "done"):
-                self._start_hand(payload.get("bet", 0), payload.get("bets_on", False))
+                # bets_on comes from persisted state (set by the switch's
+                # set_bets_on action). Don't read it from the deal payload —
+                # the phone serializes template values as strings, and
+                # bool("false") is True, so a payload-driven flag would
+                # ignore the toggle.
+                self._start_hand(payload.get("bet", 0), self._bets_on)
             return True
         if action == "hit":
             self._player_hit()
@@ -325,26 +333,30 @@ class Blackjack:
         dealer_y = area_top
         player_y = area_top + half
 
-        # Hide dealer hole card while the player is still acting.
+        # Hide dealer hole card (and total) while the player is still acting.
         hide_hole = (self._phase == "player")
-        d_total = self._dealer_visible_total(hide_hole)
+        d_total = _hand_total(self._dealer) if self._dealer else 0
         p_total = _hand_total(self._player) if self._player else 0
 
         self._draw_row(draw, "Dealer", d_total, self._dealer,
-                       dealer_y, half, w, label, hide_index=(1 if hide_hole else None))
+                       dealer_y, half, w, label,
+                       hide_index=(1 if hide_hole else None),
+                       hide_total=hide_hole)
         self._draw_row(draw, "You", p_total, self._player,
-                       player_y, half, w, label, hide_index=None)
+                       player_y, half, w, label,
+                       hide_index=None, hide_total=False)
 
-    def _dealer_visible_total(self, hide_hole):
-        if not self._dealer:
-            return 0
-        if hide_hole and len(self._dealer) >= 2:
-            return _hand_total(self._dealer[:1])
-        return _hand_total(self._dealer)
-
-    def _draw_row(self, draw, who, total, cards, y, h, w, font, hide_index):
+    def _draw_row(self, draw, who, total, cards, y, h, w, font,
+                  hide_index, hide_total):
         # Label line ("Dealer: 17"), then a row of card glyphs underneath.
-        label_text = f"{who}: {total}" if cards else who
+        # While the hole card is hidden we don't show a number — the visible
+        # up-card alone isn't the hand total, and showing it would mislead.
+        if not cards:
+            label_text = who
+        elif hide_total:
+            label_text = who
+        else:
+            label_text = f"{who}: {total}"
         draw.text((2, y), label_text, font=font, fill=0)
 
         if not cards:

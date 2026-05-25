@@ -23,16 +23,14 @@
 
     { "type": "button", "label": "Deal", "style": "primary",
       "action": { "type": "push",
-        "payload": { "action": "deal", "bet": "{{local.bet}}", "bets_on": "{{local.bets_on}}" } } },
+        "payload": { "action": "deal", "bet": "{{local.bet}}" } } },
 
-    { "type": "row", "spacing": 8, "children": [
-      { "type": "button", "label": "Hit", "style": "secondary",
-        "action": { "type": "push", "payload": { "action": "hit" } } },
-      { "type": "button", "label": "Stand", "style": "secondary",
-        "action": { "type": "push", "payload": { "action": "stand" } } },
-      { "type": "button", "label": "Double", "style": "secondary",
-        "action": { "type": "push", "payload": { "action": "double" } } }
-    ] },
+    { "type": "button", "label": "Hit", "style": "secondary",
+      "action": { "type": "push", "payload": { "action": "hit" } } },
+    { "type": "button", "label": "Stand", "style": "secondary",
+      "action": { "type": "push", "payload": { "action": "stand" } } },
+    { "type": "button", "label": "Double (chips only)", "style": "secondary",
+      "action": { "type": "push", "payload": { "action": "double" } } },
 
     { "type": "divider" },
 
