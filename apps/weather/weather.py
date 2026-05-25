@@ -95,7 +95,7 @@ def _transform(envelope):
 class Weather:
     name = "weather"
     icon = "W"
-    version = "1.3.0"
+    version = "1.4.0"
     interval_seconds = 300
 
     def __init__(self):
@@ -179,14 +179,23 @@ class Weather:
                 if bh > 0:
                     draw.rectangle((bx0, chart_y1 - bh, bx1, chart_y1), fill=0)
 
-            first = _parse_iso(rain[0].get("t"))
-            last = _parse_iso(rain[n - 1].get("t"))
-            if first:
-                draw.text((chart_x0, h - 11),
-                          first.astimezone().strftime("%H"), font=small, fill=0)
-            if last:
-                lw = draw.textlength(last.astimezone().strftime("%H"), font=small)
-                draw.text((chart_x1 - int(lw), h - 11),
-                          last.astimezone().strftime("%H"), font=small, fill=0)
+            # Hour labels at every other bar so they're spaced but legible.
+            # Use the timestamp's own TZ (preserved by _normalise_iso) — do
+            # NOT astimezone() to the host's TZ, which on a UTC-only pi
+            # shifted London-local hours into UTC and made the graph look
+            # 1-5h offset from the wall clock.
+            label_y = h - 11
+            for i, hour in enumerate(rain[:n]):
+                if i % 2 != 0:
+                    continue
+                t = _parse_iso(hour.get("t"))
+                if not t:
+                    continue
+                label = t.strftime("%H")
+                lx = chart_x0 + i * band_w
+                lw = int(draw.textlength(label, font=small))
+                if lx + lw > chart_x1:
+                    lx = chart_x1 - lw
+                draw.text((lx, label_y), label, font=small, fill=0)
         else:
             draw.text((chart_x0, chart_y0), "no rain data", font=small, fill=0)
