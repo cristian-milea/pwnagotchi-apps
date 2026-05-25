@@ -1,0 +1,14 @@
+{
+  "name": "tide-sun",
+  "version": "1.2.0",
+  "author": "buscar",
+  "description": "Sunrise/sunset, tides, and moon phase.",
+  "requires": { "permissions": ["location"] },
+  "data_source": {
+    "type": "http",
+    "method": "GET",
+    "url": "https://api.open-meteo.com/v1/forecast?latitude={{location.lat}}&longitude={{location.lon}}&daily=sunrise,sunset&forecast_days=1&timezone=auto",
+    "needs": ["location"]
+  },
+  "schema_version": 1
+}

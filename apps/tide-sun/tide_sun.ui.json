@@ -1,0 +1,23 @@
+{
+  "type": "column",
+  "padding": 16,
+  "spacing": 12,
+  "children": [
+    { "type": "text", "value": "Tide & Sun", "style": "headline" },
+    { "type": "state_text", "binding": "location",
+      "default": "Set a location to begin", "style": "title" },
+    { "type": "row", "spacing": 12, "children": [
+      { "type": "state_text", "binding": "sunrise",
+        "format": "Sunrise {}", "default": "--", "style": "body" },
+      { "type": "state_text", "binding": "sunset",
+        "format": "Sunset {}", "default": "--", "style": "body" }
+    ]},
+    { "type": "state_text", "binding": "moon_phase",
+      "format": "Moon: {}", "default": "", "style": "caption" },
+    { "type": "state_text", "binding": "tide_count",
+      "format": "{} tide events on file", "style": "caption" },
+    { "type": "divider" },
+    { "type": "button", "label": "Sync now", "style": "primary",
+      "action": { "type": "sync" } }
+  ]
+}

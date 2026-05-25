@@ -1,0 +1,14 @@
+{
+  "name": "weather",
+  "version": "1.2.0",
+  "author": "buscar",
+  "description": "Current conditions + hourly precipitation forecast.",
+  "requires": { "permissions": ["location"] },
+  "data_source": {
+    "type": "http",
+    "method": "GET",
+    "url": "https://api.open-meteo.com/v1/forecast?latitude={{location.lat}}&longitude={{location.lon}}&current=temperature_2m,apparent_temperature,weather_code&hourly=precipitation&forecast_hours=12&timezone=auto",
+    "needs": ["location"]
+  },
+  "schema_version": 1
+}

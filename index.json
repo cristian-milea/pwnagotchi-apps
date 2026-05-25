@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-05-25T00:00:00Z",
+  "apps": [
+    {
+      "name": "hello",
+      "version": "1.1.0",
+      "author": "buscar",
+      "description": "Minimal demo app — push text and it shows on the screen.",
+      "long_description": "The simplest possible pwn-app. Useful as a template when building your own. Takes a string from the phone and displays it centered on the e-ink screen.",
+      "category": "tools",
+      "requires": { "permissions": [], "secrets": [] },
+      "files": {
+        "py":       "apps/hello/hello.py",
+        "manifest": "apps/hello/hello.manifest.json",
+        "ui":       "apps/hello/hello.ui.json"
+      },
+      "size_bytes": 1805
+    },
+    {
+      "name": "magic8",
+      "version": "1.2.0",
+      "author": "buscar",
+      "description": "Magic 8-Ball. Tap Shake for an answer.",
+      "long_description": "Classic Magic 8-Ball. Ask a yes/no question, tap Shake on the phone, and your fortune appears on the e-ink. No external dependencies.",
+      "category": "fun",
+      "requires": { "permissions": [], "secrets": [] },
+      "files": {
+        "py":       "apps/magic8/magic8.py",
+        "manifest": "apps/magic8/magic8.manifest.json",
+        "ui":       "apps/magic8/magic8.ui.json"
+      },
+      "size_bytes": 5516
+    },
+    {
+      "name": "tide-sun",
+      "version": "1.2.0",
+      "author": "buscar",
+      "description": "Sunrise/sunset and moon phase.",
+      "long_description": "Shows today's sunrise and sunset times plus the current moon phase. Pulls daily sun data from Open-Meteo; moon phase is computed device-side using a Conway approximation. Tides are not yet implemented.",
+      "category": "info",
+      "requires": { "permissions": ["location"], "secrets": [] },
+      "files": {
+        "py":       "apps/tide-sun/tide_sun.py",
+        "manifest": "apps/tide-sun/tide_sun.manifest.json",
+        "ui":       "apps/tide-sun/tide_sun.ui.json"
+      },
+      "size_bytes": 7678
+    },
+    {
+      "name": "weather",
+      "version": "1.2.0",
+      "author": "buscar",
+      "description": "Current conditions + 12h rain forecast.",
+      "long_description": "Current temperature, feels-like, and weather condition plus a 12-hour precipitation bar chart. Pulls forecast data from Open-Meteo (no API key needed). Needs your location.",
+      "category": "info",
+      "requires": { "permissions": ["location"], "secrets": [] },
+      "files": {
+        "py":       "apps/weather/weather.py",
+        "manifest": "apps/weather/weather.manifest.json",
+        "ui":       "apps/weather/weather.ui.json"
+      },
+      "size_bytes": 8507
+    }
+  ]
+}
