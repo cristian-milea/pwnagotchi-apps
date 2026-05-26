@@ -1,6 +1,6 @@
 {
   "name": "maze",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "buscar",
   "description": "First-person maze crawler with random or daily-seeded mazes.",
   "schema_version": 1

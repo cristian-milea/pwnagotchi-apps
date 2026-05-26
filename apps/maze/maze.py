@@ -170,7 +170,7 @@ def _initial_facing(cells):
 class Maze:
     name = "maze"
     icon = "MZ"
-    version = "1.3.0"
+    version = "1.4.0"
 
     interval_seconds = None
 
@@ -687,10 +687,19 @@ class Maze:
             # slack ends up below the stats lines instead of around the map.
             oy = map_box[1]
 
-            # Fog texture: three dots per cell, on cells the player has
-            # neither visited nor currently lit. Past visits stay un-fogged
-            # so the player keeps a memory trail in torch mode even after
-            # the lit region collapses back to the current cell.
+            # Outer perimeter: always drawn so the player can read the maze's
+            # overall size from move 1, regardless of mode.
+            draw.rectangle((ox, oy, ox + tmw, oy + tmh), outline=0)
+
+            # Wall memory = cells the player physically stood on; their walls
+            # stay drawn forever. Torch halo / corridor sight reveals walls
+            # transiently in `visible` cells but those decay when the player
+            # leaves, unless they were stepped on.
+            wall_cells = visible | explored
+
+            # Fog texture: three dots per cell, on cells outside wall memory
+            # and outside the current lit set. Conveys maze extent without
+            # revealing layout.
             fog_offsets = (
                 (cs // 4, cs // 4),
                 (cs // 2, cs // 2),
@@ -698,19 +707,17 @@ class Maze:
             )
             for y in range(mh_cells):
                 for x in range(mw_cells):
-                    if (x, y) in visible or (x, y) in explored:
+                    if (x, y) in wall_cells:
                         continue
                     cxp = ox + x * cs
                     cyp = oy + y * cs
                     for fx, fy in fog_offsets:
                         draw.point((cxp + fx, cyp + fy), fill=0)
 
-            # Walls — only paint cells the player has discovered (visited
-            # or directly visible down a corridor). Unseen cells stay blank
-            # so the minimap reveals as you explore.
+            # Walls — draw on every cell the player has ever revealed.
             for y in range(mh_cells):
                 for x in range(mw_cells):
-                    if (x, y) not in visible:
+                    if (x, y) not in wall_cells:
                         continue
                     wall = cells[y][x]
                     cxp = ox + x * cs
@@ -724,8 +731,8 @@ class Maze:
                     if wall & WALL_BITS[3]:  # W
                         draw.line((cxp, cyp, cxp, cyp + cs), fill=0)
 
-            # Exit — only revealed once seen.
-            if (ex, ey) in visible:
+            # Exit — revealed once seen (lit) or once visited.
+            if (ex, ey) in wall_cells:
                 exp = ox + ex * cs
                 eyp = oy + ey * cs
                 if cs >= 5:
