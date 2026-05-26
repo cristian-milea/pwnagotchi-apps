@@ -382,18 +382,41 @@ class Maze:
         return False
 
     def _visible_cells(self):
-        """Returns the set of cells whose walls are revealed on the minimap.
+        """Returns the set of cells whose walls are *currently* drawn on the
+        minimap. The memory trail (visited cells, persistently un-fogged) is
+        applied separately at paint time via the `explored` set.
 
         Torch mode rules:
           - torch armed, not found  → only the player's cell (true darkness)
-          - torch armed, found      → entire maze (the torch lights it all)
-          - torch disarmed          → visited cells + corridor sight
+          - torch armed, found      → 3x3 box around the player (through walls)
+                                      plus corridor sight in the facing
+                                      direction until a wall blocks; this set
+                                      moves with the player, it is not banked
+          - torch disarmed          → visited cells + corridor sight from each
         """
+        px, py = self._player_x, self._player_y
+
         if self._torch_x is not None:
-            if self._torch_found:
-                return {(x, y) for y in range(self._maze_h)
-                        for x in range(self._maze_w)}
-            return {(self._player_x, self._player_y)}
+            if not self._torch_found:
+                return {(px, py)}
+            lit = set()
+            # 1-step "see through walls" halo: 3x3 box around the player.
+            for ddy in (-1, 0, 1):
+                for ddx in (-1, 0, 1):
+                    nx, ny = px + ddx, py + ddy
+                    if 0 <= nx < self._maze_w and 0 <= ny < self._maze_h:
+                        lit.add((nx, ny))
+            # Corridor sight forward, blocked by the first wall in the way.
+            d = self._facing
+            dx, dy = DIRS[d]
+            x, y = px, py
+            while not (self._cells[y][x] & WALL_BITS[d]):
+                x += dx
+                y += dy
+                if not (0 <= x < self._maze_w and 0 <= y < self._maze_h):
+                    break
+                lit.add((x, y))
+            return lit
 
         seen = set(self._visited)
         for vx, vy in list(self._visited):

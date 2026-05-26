@@ -45,7 +45,7 @@
         "manifest": "apps/maze/maze.manifest.json",
         "ui":       "apps/maze/maze.ui.json"
       },
-      "size_bytes": 31604
+      "size_bytes": 32664
     },
     {
       "name": "magic8",
