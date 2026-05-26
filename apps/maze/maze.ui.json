@@ -29,6 +29,21 @@
 
     { "type": "divider" },
 
+    { "type": "text", "style": "caption",
+      "value": "Torch mode: the minimap stays dark until you find a torch hidden somewhere in the maze." },
+    { "type": "when",
+      "if": { "==": [ { "var": "state.torch_mode" }, "on" ] },
+      "then": [
+        { "type": "button", "label": "Torch mode: ON — disarm", "style": "primary",
+          "action": { "type": "push", "payload": { "action": "set_torch_mode", "enabled": false } } }
+      ],
+      "else": [
+        { "type": "button", "label": "Torch mode: OFF — arm", "style": "secondary",
+          "action": { "type": "push", "payload": { "action": "set_torch_mode", "enabled": true } } }
+      ] },
+
+    { "type": "divider" },
+
     { "type": "state_text", "binding": "mode",
       "format": "Mode: {}", "style": "caption" },
     { "type": "state_text", "binding": "moves",
@@ -41,6 +56,8 @@
       "format": "Best: {}", "style": "caption" },
     { "type": "state_text", "binding": "seen",
       "format": "Explored: {}", "style": "caption" },
+    { "type": "state_text", "binding": "torch_status",
+      "format": "Torch: {}", "style": "caption" },
     { "type": "state_text", "binding": "wins",
       "format": "Mazes solved: {}", "style": "caption" }
   ]

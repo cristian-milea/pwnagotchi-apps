@@ -91,19 +91,16 @@ def _generate_maze(width, height, seed):
     return cells
 
 
-def _bfs_farthest(cells, start):
-    """Returns ((x, y), distance) for the farthest reachable cell from start."""
+def _bfs_distances(cells, src):
+    """BFS from src across open corridors. Returns dist[y][x], -1 = unreachable."""
     width = len(cells[0])
     height = len(cells)
     dist = [[-1] * width for _ in range(height)]
-    sx, sy = start
+    sx, sy = src
     dist[sy][sx] = 0
-    q = deque([start])
-    far = start
+    q = deque([src])
     while q:
         x, y = q.popleft()
-        if dist[y][x] > dist[far[1]][far[0]]:
-            far = (x, y)
         for d, (dx, dy) in enumerate(DIRS):
             if cells[y][x] & WALL_BITS[d]:
                 continue
@@ -111,7 +108,50 @@ def _bfs_farthest(cells, start):
             if 0 <= nx < width and 0 <= ny < height and dist[ny][nx] == -1:
                 dist[ny][nx] = dist[y][x] + 1
                 q.append((nx, ny))
+    return dist
+
+
+def _bfs_farthest(cells, start):
+    """Returns ((x, y), distance) for the farthest reachable cell from start."""
+    dist = _bfs_distances(cells, start)
+    width = len(cells[0])
+    height = len(cells)
+    far = start
+    for y in range(height):
+        for x in range(width):
+            if dist[y][x] > dist[far[1]][far[0]]:
+                far = (x, y)
     return far, dist[far[1]][far[0]]
+
+
+TORCH_MIN_OPTIMUM = 31
+TORCH_DIST_MIN = 20
+TORCH_DIST_MAX = 30
+TORCH_RETRY_CAP = 64
+
+
+def _torch_placement(cells, exit_xy, rng):
+    """Pick a cell whose BFS distance from the exit is in [TORCH_DIST_MIN,
+    TORCH_DIST_MAX]. If the maze is too small for any such cell, fall back
+    to the cell farthest from the exit so a torch always exists."""
+    dist = _bfs_distances(cells, exit_xy)
+    target = rng.randint(TORCH_DIST_MIN, TORCH_DIST_MAX)
+    candidates = [(x, y) for y, row in enumerate(dist)
+                  for x, d in enumerate(row) if d == target]
+    if candidates:
+        return rng.choice(candidates)
+    for d in range(TORCH_DIST_MAX, TORCH_DIST_MIN - 1, -1):
+        picks = [(x, y) for y, row in enumerate(dist)
+                 for x, dd in enumerate(row) if dd == d]
+        if picks:
+            return rng.choice(picks)
+    # Maze is shorter than the preferred range — use the deepest reachable cell.
+    far_x, far_y = exit_xy
+    for y, row in enumerate(dist):
+        for x, d in enumerate(row):
+            if d > dist[far_y][far_x]:
+                far_x, far_y = x, y
+    return (far_x, far_y) if (far_x, far_y) != exit_xy else None
 
 
 def _daily_seed():
@@ -130,7 +170,7 @@ def _initial_facing(cells):
 class Maze:
     name = "maze"
     icon = "MZ"
-    version = "1.2.0"
+    version = "1.3.0"
 
     interval_seconds = None
 
@@ -178,6 +218,15 @@ class Maze:
         else:
             self._visited = {(self._player_x, self._player_y)}
 
+        # Torch mode: when armed, the next New Maze places a torch on the
+        # critical path. Until the player walks onto it, the minimap is
+        # fully fogged; pickup reveals the full layout.
+        self._torch_mode_enabled = bool(s.get("torch_mode_enabled", False))
+        tx, ty = s.get("torch_x"), s.get("torch_y")
+        self._torch_x = int(tx) if isinstance(tx, int) else None
+        self._torch_y = int(ty) if isinstance(ty, int) else None
+        self._torch_found = bool(s.get("torch_found", False))
+
     # ---- persistence ----
     def _persist(self):
         _save_state(STATE_PATH, {
@@ -198,24 +247,64 @@ class Maze:
             "best_random": self._best_random,
             "best_daily": self._best_daily,
             "visited": [list(p) for p in self._visited],
+            "torch_mode_enabled": self._torch_mode_enabled,
+            "torch_x": self._torch_x,
+            "torch_y": self._torch_y,
+            "torch_found": self._torch_found,
         })
 
     # ---- game flow ----
     def _new_game(self, mode):
-        if mode == "daily":
-            seed = _daily_seed()
-        else:
-            seed = int(time.time() * 1000) & 0x7fffffff
-        self._mode = mode
-        self._seed = seed
         # Always pull the latest module-level dimensions so version bumps that
         # change maze size take effect on the next New-Maze press.
         self._maze_w = MAZE_W
         self._maze_h = MAZE_H
-        self._cells = _generate_maze(self._maze_w, self._maze_h, seed)
-        (ex, ey), opt = _bfs_farthest(self._cells, (0, 0))
-        self._exit_x, self._exit_y = ex, ey
-        self._optimal = opt
+
+        if mode == "daily":
+            base_seed = _daily_seed()
+        else:
+            base_seed = int(time.time() * 1000) & 0x7fffffff
+
+        torch_armed = self._torch_mode_enabled
+        # Torch mode requires a maze long enough to make finding the torch
+        # interesting. Advance the seed deterministically until the optimum
+        # crosses the floor so every device armed on day D converges on the
+        # same maze.
+        seed = base_seed
+        cells = None
+        exit_xy = None
+        optimal = 0
+        for _attempt in range(TORCH_RETRY_CAP):
+            cells = _generate_maze(self._maze_w, self._maze_h, seed)
+            exit_xy, optimal = _bfs_farthest(cells, (0, 0))
+            if not torch_armed or optimal >= TORCH_MIN_OPTIMUM:
+                break
+            seed = (seed + 1) & 0x7fffffff
+        else:
+            # Couldn't satisfy the floor — play without a torch rather than
+            # refuse to start.
+            cells = _generate_maze(self._maze_w, self._maze_h, base_seed)
+            exit_xy, optimal = _bfs_farthest(cells, (0, 0))
+            torch_armed = False
+            seed = base_seed
+
+        self._mode = mode
+        self._seed = seed
+        self._cells = cells
+        self._exit_x, self._exit_y = exit_xy
+        self._optimal = optimal
+
+        if torch_armed:
+            # Deterministic torch placement: derive an RNG from the (final)
+            # seed so daily players see the torch in the same cell.
+            place_rng = random.Random(seed ^ 0x70_1C_4E)
+            torch = _torch_placement(self._cells, exit_xy, place_rng)
+            self._torch_x = torch[0] if torch else None
+            self._torch_y = torch[1] if torch else None
+        else:
+            self._torch_x = None
+            self._torch_y = None
+
         self._player_x = 0
         self._player_y = 0
         self._facing = _initial_facing(self._cells)
@@ -223,6 +312,7 @@ class Maze:
         self._completed = False
         self._started_at = time.time()
         self._visited = {(0, 0)}
+        self._torch_found = False
         self._persist()
 
     def _step(self, direction):
@@ -237,6 +327,9 @@ class Maze:
         self._player_y = ny
         self._moves += 1
         self._visited.add((nx, ny))
+        if (self._torch_x is not None and not self._torch_found
+                and (nx, ny) == (self._torch_x, self._torch_y)):
+            self._torch_found = True
 
     def _handle(self, action):
         if self._completed:
@@ -269,7 +362,8 @@ class Maze:
 
     # ---- host hooks ----
     def on_data(self, payload):
-        action = (payload or {}).get("action")
+        payload = payload or {}
+        action = payload.get("action")
         with self._lock:
             if action == "new_random":
                 self._new_game("random")
@@ -277,14 +371,30 @@ class Maze:
             if action == "new_daily":
                 self._new_game("daily")
                 return True
+            if action == "set_torch_mode":
+                # Arm/disarm — affects the *next* New Maze, not the current one.
+                self._torch_mode_enabled = bool(payload.get("enabled", False))
+                self._persist()
+                return True
             if action in ("forward", "back", "turn_left", "turn_right"):
                 self._handle(action)
                 return True
         return False
 
     def _visible_cells(self):
-        """Visited cells plus everything reachable in a straight line down an
-        open corridor from a visited cell. Cells around a corner stay hidden."""
+        """Returns the set of cells whose walls are revealed on the minimap.
+
+        Torch mode rules:
+          - torch armed, not found  → only the player's cell (true darkness)
+          - torch armed, found      → entire maze (the torch lights it all)
+          - torch disarmed          → visited cells + corridor sight
+        """
+        if self._torch_x is not None:
+            if self._torch_found:
+                return {(x, y) for y in range(self._maze_h)
+                        for x in range(self._maze_w)}
+            return {(self._player_x, self._player_y)}
+
         seen = set(self._visited)
         for vx, vy in list(self._visited):
             for d, (dx, dy) in enumerate(DIRS):
@@ -303,6 +413,12 @@ class Maze:
         else:
             best = self._best_random
         total_cells = self._maze_w * self._maze_h
+        if self._torch_x is None:
+            torch_status = "off"
+        elif self._torch_found:
+            torch_status = "lit"
+        else:
+            torch_status = "armed"
         return {
             "mode": "daily" if self._mode == "daily" else "random",
             "moves": self._moves,
@@ -313,6 +429,8 @@ class Maze:
             "best": best if best is not None else "—",
             "seed": str(self._seed),
             "seen": f"{len(self._visited)}/{total_cells}",
+            "torch_mode": "on" if self._torch_mode_enabled else "off",
+            "torch_status": torch_status,
         }
 
     # ---- rendering ----
@@ -337,11 +455,12 @@ class Maze:
             best_random = self._best_random
             best_daily = dict(self._best_daily)
             visible = self._visible_cells()
+            explored = set(self._visited)
 
         try:
             self._paint(draw, w, h, mode, seed, moves, optimal, completed,
                         facing, px, py, ex, ey, cells, best_random,
-                        best_daily, visible)
+                        best_daily, visible, explored)
         except Exception:
             logging.exception("maze: render failed")
             # Fall back to a plain text screen so the device isn't blank.
@@ -350,7 +469,7 @@ class Maze:
 
     def _paint(self, draw, w, h, mode, seed, moves, optimal, completed,
                facing, px, py, ex, ey, cells, best_random, best_daily,
-               visible):
+               visible, explored):
         title_f = self._font(10)
         small_f = self._font(8)
         big_f = self._font(14)
@@ -384,7 +503,7 @@ class Maze:
         self._paint_fpv(draw, cells, px, py, facing, ex, ey, fpv_box)
         self._paint_info(draw, info_box, cells, px, py, facing, ex, ey,
                          mode, best_random, best_daily, optimal, small_f,
-                         visible)
+                         visible, explored)
 
     # ---- victory screen ----
     def _paint_victory(self, draw, w, top, bot, moves, optimal, mode,
@@ -526,7 +645,7 @@ class Maze:
     # ---- info panel: minimap + stats ----
     def _paint_info(self, draw, box, cells, px, py, facing, ex, ey,
                     mode, best_random, best_daily, optimal, small_f,
-                    visible):
+                    visible, explored):
         x0, y0, x1, y1 = box
         info_text_h = 20
         map_box = (x0, y0, x1, y1 - info_text_h)
@@ -545,16 +664,23 @@ class Maze:
             # slack ends up below the stats lines instead of around the map.
             oy = map_box[1]
 
-            # Fog texture: a single dot at the centre of every cell, so the
-            # player perceives the maze's overall size and shape even where
-            # walls are still hidden. Visited / corridor-sighted cells will
-            # overlay clean walls on top.
+            # Fog texture: three dots per cell, on cells the player has
+            # neither visited nor currently lit. Past visits stay un-fogged
+            # so the player keeps a memory trail in torch mode even after
+            # the lit region collapses back to the current cell.
+            fog_offsets = (
+                (cs // 4, cs // 4),
+                (cs // 2, cs // 2),
+                (3 * cs // 4, 3 * cs // 4),
+            )
             for y in range(mh_cells):
                 for x in range(mw_cells):
-                    if (x, y) in visible:
+                    if (x, y) in visible or (x, y) in explored:
                         continue
-                    draw.point((ox + x * cs + cs // 2,
-                                oy + y * cs + cs // 2), fill=0)
+                    cxp = ox + x * cs
+                    cyp = oy + y * cs
+                    for fx, fy in fog_offsets:
+                        draw.point((cxp + fx, cyp + fy), fill=0)
 
             # Walls — only paint cells the player has discovered (visited
             # or directly visible down a corridor). Unseen cells stay blank
