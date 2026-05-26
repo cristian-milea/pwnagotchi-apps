@@ -128,6 +128,8 @@ TORCH_MIN_OPTIMUM = 31
 TORCH_DIST_MIN = 20
 TORCH_DIST_MAX = 30
 TORCH_RETRY_CAP = 64
+TORCH_DURATION = 40
+FPV_MAX_DEPTH = 4
 
 
 def _torch_placement(cells, exit_xy, rng):
@@ -170,7 +172,7 @@ def _initial_facing(cells):
 class Maze:
     name = "maze"
     icon = "MZ"
-    version = "1.4.0"
+    version = "1.5.0"
 
     interval_seconds = None
 
@@ -226,6 +228,8 @@ class Maze:
         self._torch_x = int(tx) if isinstance(tx, int) else None
         self._torch_y = int(ty) if isinstance(ty, int) else None
         self._torch_found = bool(s.get("torch_found", False))
+        tml = s.get("torch_moves_left")
+        self._torch_moves_left = int(tml) if isinstance(tml, int) else None
 
     # ---- persistence ----
     def _persist(self):
@@ -251,6 +255,7 @@ class Maze:
             "torch_x": self._torch_x,
             "torch_y": self._torch_y,
             "torch_found": self._torch_found,
+            "torch_moves_left": self._torch_moves_left,
         })
 
     # ---- game flow ----
@@ -313,6 +318,7 @@ class Maze:
         self._started_at = time.time()
         self._visited = {(0, 0)}
         self._torch_found = False
+        self._torch_moves_left = None
         self._persist()
 
     def _step(self, direction):
@@ -323,6 +329,12 @@ class Maze:
         nx, ny = x + dx, y + dy
         if not (0 <= nx < self._maze_w and 0 <= ny < self._maze_h):
             return
+        # Tick the torch *before* applying the new position, so the step that
+        # picks up the torch doesn't immediately count against its duration.
+        if (self._torch_found
+                and self._torch_moves_left is not None
+                and self._torch_moves_left > 0):
+            self._torch_moves_left -= 1
         self._player_x = nx
         self._player_y = ny
         self._moves += 1
@@ -330,6 +342,7 @@ class Maze:
         if (self._torch_x is not None and not self._torch_found
                 and (nx, ny) == (self._torch_x, self._torch_y)):
             self._torch_found = True
+            self._torch_moves_left = TORCH_DURATION
 
     def _handle(self, action):
         if self._completed:
@@ -397,7 +410,11 @@ class Maze:
         px, py = self._player_x, self._player_y
 
         if self._torch_x is not None:
-            if not self._torch_found:
+            torch_lit = (self._torch_found
+                         and self._torch_moves_left is not None
+                         and self._torch_moves_left > 0)
+            if not torch_lit:
+                # Pre-pickup darkness OR the torch has burned out.
                 return {(px, py)}
             lit = set()
             # 1-step "see through walls" halo: 3x3 box around the player.
@@ -438,10 +455,13 @@ class Maze:
         total_cells = self._maze_w * self._maze_h
         if self._torch_x is None:
             torch_status = "off"
-        elif self._torch_found:
-            torch_status = "lit"
-        else:
+        elif not self._torch_found:
             torch_status = "armed"
+        elif (self._torch_moves_left is not None
+              and self._torch_moves_left > 0):
+            torch_status = f"lit • {self._torch_moves_left} steps"
+        else:
+            torch_status = "burned out"
         return {
             "mode": "daily" if self._mode == "daily" else "random",
             "moves": self._moves,
@@ -479,11 +499,16 @@ class Maze:
             best_daily = dict(self._best_daily)
             visible = self._visible_cells()
             explored = set(self._visited)
+            torch_render = {
+                "x": self._torch_x,
+                "y": self._torch_y,
+                "found": self._torch_found,
+            }
 
         try:
             self._paint(draw, w, h, mode, seed, moves, optimal, completed,
                         facing, px, py, ex, ey, cells, best_random,
-                        best_daily, visible, explored)
+                        best_daily, visible, explored, torch_render)
         except Exception:
             logging.exception("maze: render failed")
             # Fall back to a plain text screen so the device isn't blank.
@@ -492,7 +517,7 @@ class Maze:
 
     def _paint(self, draw, w, h, mode, seed, moves, optimal, completed,
                facing, px, py, ex, ey, cells, best_random, best_daily,
-               visible, explored):
+               visible, explored, torch_render):
         title_f = self._font(10)
         small_f = self._font(8)
         big_f = self._font(14)
@@ -523,10 +548,11 @@ class Maze:
         fpv_box = (2, body_top, 2 + fpv_w, body_bot)
         info_box = (2 + fpv_w + gap, body_top, w - 2, body_bot)
 
-        self._paint_fpv(draw, cells, px, py, facing, ex, ey, fpv_box)
+        self._paint_fpv(draw, cells, px, py, facing, ex, ey, fpv_box,
+                        torch_render)
         self._paint_info(draw, info_box, cells, px, py, facing, ex, ey,
                          mode, best_random, best_daily, optimal, small_f,
-                         visible, explored)
+                         visible, explored, torch_render)
 
     # ---- victory screen ----
     def _paint_victory(self, draw, w, top, bot, moves, optimal, mode,
@@ -554,12 +580,13 @@ class Maze:
         draw.text(((w - hw) // 2, bot - 10), hint, font=small_f, fill=0)
 
     # ---- first-person view ----
-    def _paint_fpv(self, draw, cells, px, py, facing, ex, ey, box):
+    def _paint_fpv(self, draw, cells, px, py, facing, ex, ey, box,
+                   torch_render):
         x0, y0, x1, y1 = box
         # White background + black border framing the view.
         draw.rectangle((x0, y0, x1, y1), outline=0, fill=1)
 
-        MAX_DEPTH = 4
+        MAX_DEPTH = FPV_MAX_DEPTH
         SHRINK = 0.55
         cx = (x0 + x1) / 2.0
         cy = (y0 + y1) / 2.0
@@ -584,6 +611,10 @@ class Maze:
         prev_right = True
         closed = False
         exit_drawn_at = None  # depth where the X marker was drawn
+        torch_drawn = False
+        torch_x = torch_render.get("x")
+        torch_y = torch_render.get("y")
+        torch_visible = (torch_x is not None and not torch_render.get("found"))
 
         for d in range(MAX_DEPTH):
             tx, ty = px + fdx * d, py + fdy * d
@@ -611,6 +642,12 @@ class Maze:
             if d >= 1 and (tx, ty) == (ex, ey) and exit_drawn_at is None:
                 self._exit_marker(draw, far)
                 exit_drawn_at = d
+
+            # Torch — same rule: only when directly down the visible corridor.
+            if (d >= 1 and torch_visible and not torch_drawn
+                    and (tx, ty) == (torch_x, torch_y)):
+                self._torch_marker(draw, far)
+                torch_drawn = True
 
             if has_front:
                 self._closing_wall(draw, far)
@@ -665,10 +702,20 @@ class Maze:
         draw.line((cxp - size, cyp - size, cxp + size, cyp + size), fill=0)
         draw.line((cxp + size, cyp - size, cxp - size, cyp + size), fill=0)
 
+    def _torch_marker(self, draw, far_frame):
+        # A "T" shape — flame on top, handle below — clearly distinct from
+        # the exit's X. Centered in the far frame so it appears to recede.
+        fx0, fy0, fx1, fy1 = far_frame
+        cxp = (fx0 + fx1) / 2
+        cyp = (fy0 + fy1) / 2
+        size = max(2, min(fx1 - fx0, fy1 - fy0) / 3)
+        draw.line((cxp - size, cyp - size, cxp + size, cyp - size), fill=0)
+        draw.line((cxp, cyp - size, cxp, cyp + size), fill=0)
+
     # ---- info panel: minimap + stats ----
     def _paint_info(self, draw, box, cells, px, py, facing, ex, ey,
                     mode, best_random, best_daily, optimal, small_f,
-                    visible, explored):
+                    visible, explored, torch_render):
         x0, y0, x1, y1 = box
         info_text_h = 20
         map_box = (x0, y0, x1, y1 - info_text_h)
@@ -740,6 +787,36 @@ class Maze:
                                     exp + cs - 2, eyp + cs - 2), fill=0)
                 else:
                     draw.point((exp + cs // 2, eyp + cs // 2), fill=0)
+
+            # Torch — shown on the minimap when it lies directly down the
+            # current forward corridor (same line of sight that puts it in
+            # the FPV). Walls stay hidden either way; this is just the
+            # "I see something glittering ahead" hint the player needs.
+            torch_x = torch_render.get("x")
+            torch_y = torch_render.get("y")
+            if torch_x is not None and not torch_render.get("found"):
+                ddx, ddy = DIRS[facing]
+                sx, sy = px, py
+                for _ in range(FPV_MAX_DEPTH):
+                    if cells[sy][sx] & WALL_BITS[facing]:
+                        break
+                    sx += ddx
+                    sy += ddy
+                    if not (0 <= sx < mw_cells and 0 <= sy < mh_cells):
+                        break
+                    if (sx, sy) == (torch_x, torch_y):
+                        txp = ox + torch_x * cs
+                        typ = oy + torch_y * cs
+                        if cs >= 5:
+                            cxp = txp + cs // 2
+                            cyp = typ + cs // 2
+                            s = max(1, cs // 3)
+                            draw.line((cxp - s, cyp - s,
+                                       cxp + s, cyp - s), fill=0)
+                            draw.line((cxp, cyp - s, cxp, cyp + s), fill=0)
+                        else:
+                            draw.point((txp + cs // 2, typ + cs // 2), fill=0)
+                        break
 
             # Player — triangular arrow showing facing.
             pxp = ox + px * cs
