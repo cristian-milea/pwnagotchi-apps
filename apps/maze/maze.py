@@ -172,7 +172,7 @@ def _initial_facing(cells):
 class Maze:
     name = "maze"
     icon = "MZ"
-    version = "1.5.0"
+    version = "1.6.0"
 
     interval_seconds = None
 
@@ -499,10 +499,17 @@ class Maze:
             best_daily = dict(self._best_daily)
             visible = self._visible_cells()
             explored = set(self._visited)
+            torch_lit_now = (
+                self._torch_x is not None
+                and self._torch_found
+                and self._torch_moves_left is not None
+                and self._torch_moves_left > 0
+            )
             torch_render = {
                 "x": self._torch_x,
                 "y": self._torch_y,
                 "found": self._torch_found,
+                "lit_now": torch_lit_now,
             }
 
         try:
@@ -702,6 +709,22 @@ class Maze:
         draw.line((cxp - size, cyp - size, cxp + size, cyp + size), fill=0)
         draw.line((cxp + size, cyp - size, cxp - size, cyp + size), fill=0)
 
+    def _dashed_rect(self, draw, x0, y0, x1, y1, dash=2, gap=2):
+        """Draw a dashed rectangle outline (used for the torch halo border)."""
+        step = dash + gap
+        x = x0
+        while x <= x1:
+            end = min(x + dash - 1, x1)
+            draw.line((x, y0, end, y0), fill=0)
+            draw.line((x, y1, end, y1), fill=0)
+            x += step
+        y = y0
+        while y <= y1:
+            end = min(y + dash - 1, y1)
+            draw.line((x0, y, x0, end), fill=0)
+            draw.line((x1, y, x1, end), fill=0)
+            y += step
+
     def _torch_marker(self, draw, far_frame):
         # A "T" shape — flame on top, handle below — clearly distinct from
         # the exit's X. Centered in the far frame so it appears to recede.
@@ -817,6 +840,41 @@ class Maze:
                         else:
                             draw.point((txp + cs // 2, typ + cs // 2), fill=0)
                         break
+
+            # Torch-active overlays — only while the player is carrying a
+            # burning torch. Distinguishes "lit now" cells from "remembered"
+            # cells and telegraphs the halo's reach.
+            if torch_render.get("lit_now"):
+                # 3-pixel L tick in each corner of every currently-lit cell,
+                # inset by 1 px so the wall lines stay legible underneath.
+                for (lx, ly) in visible:
+                    if (lx, ly) == (px, py):
+                        continue  # the player triangle owns this cell
+                    cxp = ox + lx * cs
+                    cyp = oy + ly * cs
+                    # top-left
+                    draw.point((cxp + 1, cyp + 1), fill=0)
+                    draw.point((cxp + 2, cyp + 1), fill=0)
+                    draw.point((cxp + 1, cyp + 2), fill=0)
+                    # top-right
+                    draw.point((cxp + cs - 2, cyp + 1), fill=0)
+                    draw.point((cxp + cs - 3, cyp + 1), fill=0)
+                    draw.point((cxp + cs - 2, cyp + 2), fill=0)
+                    # bottom-left
+                    draw.point((cxp + 1, cyp + cs - 2), fill=0)
+                    draw.point((cxp + 2, cyp + cs - 2), fill=0)
+                    draw.point((cxp + 1, cyp + cs - 3), fill=0)
+                    # bottom-right
+                    draw.point((cxp + cs - 2, cyp + cs - 2), fill=0)
+                    draw.point((cxp + cs - 3, cyp + cs - 2), fill=0)
+                    draw.point((cxp + cs - 2, cyp + cs - 3), fill=0)
+
+                # Dashed bounding box around the 3x3 halo at the player.
+                hx0 = max(ox, ox + (px - 1) * cs)
+                hy0 = max(oy, oy + (py - 1) * cs)
+                hx1 = min(ox + tmw, ox + (px + 2) * cs) - 1
+                hy1 = min(oy + tmh, oy + (py + 2) * cs) - 1
+                self._dashed_rect(draw, hx0, hy0, hx1, hy1)
 
             # Player — triangular arrow showing facing.
             pxp = ox + px * cs
