@@ -39,7 +39,7 @@ from PIL import ImageFont
 STATE_PATH = "/etc/pwnagotchi/maze.state.json"
 
 MAZE_W = 10
-MAZE_H = 6
+MAZE_H = 7
 
 # Wall bit per direction. Direction enum: 0=N 1=E 2=S 3=W. y grows downward.
 WALL_BITS = [1, 2, 4, 8]
@@ -130,7 +130,7 @@ def _initial_facing(cells):
 class Maze:
     name = "maze"
     icon = "MZ"
-    version = "1.1.0"
+    version = "1.2.0"
 
     interval_seconds = None
 
@@ -208,6 +208,10 @@ class Maze:
             seed = int(time.time() * 1000) & 0x7fffffff
         self._mode = mode
         self._seed = seed
+        # Always pull the latest module-level dimensions so version bumps that
+        # change maze size take effect on the next New-Maze press.
+        self._maze_w = MAZE_W
+        self._maze_h = MAZE_H
         self._cells = _generate_maze(self._maze_w, self._maze_h, seed)
         (ex, ey), opt = _bfs_farthest(self._cells, (0, 0))
         self._exit_x, self._exit_y = ex, ey
@@ -537,7 +541,20 @@ class Maze:
             tmw = cs * mw_cells
             tmh = cs * mh_cells
             ox = map_box[0] + (aw - tmw) // 2
-            oy = map_box[1] + (ah - tmh) // 2
+            # Top-align so the map sits flush under the title bar; vertical
+            # slack ends up below the stats lines instead of around the map.
+            oy = map_box[1]
+
+            # Fog texture: a single dot at the centre of every cell, so the
+            # player perceives the maze's overall size and shape even where
+            # walls are still hidden. Visited / corridor-sighted cells will
+            # overlay clean walls on top.
+            for y in range(mh_cells):
+                for x in range(mw_cells):
+                    if (x, y) in visible:
+                        continue
+                    draw.point((ox + x * cs + cs // 2,
+                                oy + y * cs + cs // 2), fill=0)
 
             # Walls — only paint cells the player has discovered (visited
             # or directly visible down a corridor). Unseen cells stay blank
