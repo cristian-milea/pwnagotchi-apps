@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-26T10:00:00Z",
+  "updated_at": "2026-05-26T12:00:00Z",
   "apps": [
     {
       "name": "blackjack",
@@ -31,6 +31,21 @@
         "ui":       "apps/hello/hello.ui.json"
       },
       "size_bytes": 1805
+    },
+    {
+      "name": "maze",
+      "version": "1.0.0",
+      "author": "buscar",
+      "description": "First-person maze crawler — random or daily-seeded mazes.",
+      "long_description": "Generates a fresh maze on the device (recursive backtracker) and shows it in a Wizardry-style first-person view. Phone has Turn/Forward/Back buttons; the e-ink draws the perspective walls plus a minimap. Two modes: random (new seed every time) and daily (everyone on every device gets the same maze each day). Find the exit in as few steps as the optimum.",
+      "category": "fun",
+      "requires": { "permissions": [], "secrets": [] },
+      "files": {
+        "py":       "apps/maze/maze.py",
+        "manifest": "apps/maze/maze.manifest.json",
+        "ui":       "apps/maze/maze.ui.json"
+      },
+      "size_bytes": 22744
     },
     {
       "name": "magic8",
