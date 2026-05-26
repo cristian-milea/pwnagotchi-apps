@@ -130,7 +130,7 @@ def _initial_facing(cells):
 class Maze:
     name = "maze"
     icon = "MZ"
-    version = "1.0.0"
+    version = "1.1.0"
 
     interval_seconds = None
 
@@ -168,6 +168,16 @@ class Maze:
         self._completed = bool(s.get("completed", False))
         self._started_at = float(s.get("started_at") or time.time())
 
+        # Fog of war: only cells the player has stood on count as discovered.
+        # Older state files don't carry this; seed from the current pose so
+        # in-progress games don't suddenly reveal the whole map.
+        raw_visited = s.get("visited")
+        if isinstance(raw_visited, list) and raw_visited:
+            self._visited = {(int(p[0]), int(p[1])) for p in raw_visited
+                             if isinstance(p, (list, tuple)) and len(p) >= 2}
+        else:
+            self._visited = {(self._player_x, self._player_y)}
+
     # ---- persistence ----
     def _persist(self):
         _save_state(STATE_PATH, {
@@ -187,6 +197,7 @@ class Maze:
             "wins": self._wins,
             "best_random": self._best_random,
             "best_daily": self._best_daily,
+            "visited": [list(p) for p in self._visited],
         })
 
     # ---- game flow ----
@@ -207,6 +218,7 @@ class Maze:
         self._moves = 0
         self._completed = False
         self._started_at = time.time()
+        self._visited = {(0, 0)}
         self._persist()
 
     def _step(self, direction):
@@ -220,6 +232,7 @@ class Maze:
         self._player_x = nx
         self._player_y = ny
         self._moves += 1
+        self._visited.add((nx, ny))
 
     def _handle(self, action):
         if self._completed:
@@ -265,11 +278,27 @@ class Maze:
                 return True
         return False
 
+    def _visible_cells(self):
+        """Visited cells plus everything reachable in a straight line down an
+        open corridor from a visited cell. Cells around a corner stay hidden."""
+        seen = set(self._visited)
+        for vx, vy in list(self._visited):
+            for d, (dx, dy) in enumerate(DIRS):
+                x, y = vx, vy
+                while not (self._cells[y][x] & WALL_BITS[d]):
+                    x += dx
+                    y += dy
+                    if not (0 <= x < self._maze_w and 0 <= y < self._maze_h):
+                        break
+                    seen.add((x, y))
+        return seen
+
     def published_state(self):
         if self._mode == "daily":
             best = self._best_daily.get(date.today().isoformat())
         else:
             best = self._best_random
+        total_cells = self._maze_w * self._maze_h
         return {
             "mode": "daily" if self._mode == "daily" else "random",
             "moves": self._moves,
@@ -279,6 +308,7 @@ class Maze:
             "optimal": self._optimal,
             "best": best if best is not None else "—",
             "seed": str(self._seed),
+            "seen": f"{len(self._visited)}/{total_cells}",
         }
 
     # ---- rendering ----
@@ -302,11 +332,12 @@ class Maze:
             cells = [row[:] for row in self._cells]
             best_random = self._best_random
             best_daily = dict(self._best_daily)
+            visible = self._visible_cells()
 
         try:
             self._paint(draw, w, h, mode, seed, moves, optimal, completed,
                         facing, px, py, ex, ey, cells, best_random,
-                        best_daily)
+                        best_daily, visible)
         except Exception:
             logging.exception("maze: render failed")
             # Fall back to a plain text screen so the device isn't blank.
@@ -314,7 +345,8 @@ class Maze:
             draw.text((4, 4), "MAZE — render error", font=f, fill=0)
 
     def _paint(self, draw, w, h, mode, seed, moves, optimal, completed,
-               facing, px, py, ex, ey, cells, best_random, best_daily):
+               facing, px, py, ex, ey, cells, best_random, best_daily,
+               visible):
         title_f = self._font(10)
         small_f = self._font(8)
         big_f = self._font(14)
@@ -347,7 +379,8 @@ class Maze:
 
         self._paint_fpv(draw, cells, px, py, facing, ex, ey, fpv_box)
         self._paint_info(draw, info_box, cells, px, py, facing, ex, ey,
-                         mode, best_random, best_daily, optimal, small_f)
+                         mode, best_random, best_daily, optimal, small_f,
+                         visible)
 
     # ---- victory screen ----
     def _paint_victory(self, draw, w, top, bot, moves, optimal, mode,
@@ -488,7 +521,8 @@ class Maze:
 
     # ---- info panel: minimap + stats ----
     def _paint_info(self, draw, box, cells, px, py, facing, ex, ey,
-                    mode, best_random, best_daily, optimal, small_f):
+                    mode, best_random, best_daily, optimal, small_f,
+                    visible):
         x0, y0, x1, y1 = box
         info_text_h = 20
         map_box = (x0, y0, x1, y1 - info_text_h)
@@ -505,9 +539,13 @@ class Maze:
             ox = map_box[0] + (aw - tmw) // 2
             oy = map_box[1] + (ah - tmh) // 2
 
-            # Walls
+            # Walls — only paint cells the player has discovered (visited
+            # or directly visible down a corridor). Unseen cells stay blank
+            # so the minimap reveals as you explore.
             for y in range(mh_cells):
                 for x in range(mw_cells):
+                    if (x, y) not in visible:
+                        continue
                     wall = cells[y][x]
                     cxp = ox + x * cs
                     cyp = oy + y * cs
@@ -520,14 +558,15 @@ class Maze:
                     if wall & WALL_BITS[3]:  # W
                         draw.line((cxp, cyp, cxp, cyp + cs), fill=0)
 
-            # Exit — small filled square inset.
-            exp = ox + ex * cs
-            eyp = oy + ey * cs
-            if cs >= 5:
-                draw.rectangle((exp + 2, eyp + 2, exp + cs - 2, eyp + cs - 2),
-                               fill=0)
-            else:
-                draw.point((exp + cs // 2, eyp + cs // 2), fill=0)
+            # Exit — only revealed once seen.
+            if (ex, ey) in visible:
+                exp = ox + ex * cs
+                eyp = oy + ey * cs
+                if cs >= 5:
+                    draw.rectangle((exp + 2, eyp + 2,
+                                    exp + cs - 2, eyp + cs - 2), fill=0)
+                else:
+                    draw.point((exp + cs // 2, eyp + cs // 2), fill=0)
 
             # Player — triangular arrow showing facing.
             pxp = ox + px * cs
