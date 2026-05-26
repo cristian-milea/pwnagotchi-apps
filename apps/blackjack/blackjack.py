@@ -91,7 +91,7 @@ def _fresh_deck():
 class Blackjack:
     name = "blackjack"
     icon = "BJ"
-    version = "1.0.4"
+    version = "1.1.1"
 
     # Phase strings: "idle", "player", "dealer", "done"
     #
@@ -471,6 +471,15 @@ class Blackjack:
             min_step = 8
             step = max(min_step, (available - card_w) // (n - 1))
 
+        # Failsafe: if even the compact overlap can't squeeze every card into
+        # the available width, fall back to a plain text list ("K♠ A♥ 5♦ …").
+        # In a single deck this is unreachable in practice (max ~12 cards in a
+        # blackjack hand) but the renderer should never draw past the panel.
+        if (n - 1) * step + card_w > available:
+            self._draw_card_list(draw, cards_left, y, h, available,
+                                 cards, hide_index)
+            return
+
         cy = y + (h - card_h) // 2
         for i, (rank, suit) in enumerate(cards):
             cx = cards_left + i * step
@@ -482,6 +491,42 @@ class Blackjack:
                                         rank, suit)
             else:
                 self._draw_card(draw, cx, cy, card_w, card_h, rank, suit)
+
+    def _draw_card_list(self, draw, x, y, h, available, cards, hide_index):
+        # Compact text fallback for absurd hand sizes. Renders cards as
+        # "K♠ A♥ 5♦ …"; the hole card (when hidden) becomes "??". If even
+        # the text overflows, truncates and appends "+N".
+        font = self._font(10)
+        parts = []
+        for i, (rank, suit) in enumerate(cards):
+            if hide_index is not None and i == hide_index:
+                parts.append("??")
+            else:
+                parts.append(f"{rank}{SUIT_GLYPH.get(suit, suit)}")
+
+        text = " ".join(parts)
+        if int(draw.textlength(text, font=font)) <= available:
+            text_y = y + (h - 12) // 2
+            draw.text((x, text_y), text, font=font, fill=0)
+            return
+
+        # Truncate from the head, keeping the most recent cards visible, until
+        # the prefix + " +N" suffix fits.
+        kept = list(parts)
+        dropped = 0
+        while kept:
+            suffix = f"+{dropped}" if dropped else ""
+            candidate = (suffix + " " if suffix else "") + " ".join(kept)
+            if int(draw.textlength(candidate, font=font)) <= available:
+                text_y = y + (h - 12) // 2
+                draw.text((x, text_y), candidate, font=font, fill=0)
+                return
+            kept.pop(0)
+            dropped += 1
+        # Worst case (no card fits at all) — show just the count.
+        text_y = y + (h - 12) // 2
+        draw.text((x, text_y), f"{len(cards)} cards",
+                  font=font, fill=0)
 
     def _draw_card(self, draw, x, y, cw, ch, rank, suit):
         draw.rectangle((x, y, x + cw - 1, y + ch - 1), outline=0, fill=1)

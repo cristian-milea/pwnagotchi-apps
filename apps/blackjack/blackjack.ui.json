@@ -12,25 +12,34 @@
       "action_on":  { "type": "push", "payload": { "action": "set_bets_on", "value": true  } },
       "action_off": { "type": "push", "payload": { "action": "set_bets_on", "value": false } } },
 
-    { "type": "select", "local": "bet", "label": "Bet",
-      "default": "10",
-      "options": [
-        { "value": "5",  "label": "$5"  },
-        { "value": "10", "label": "$10" },
-        { "value": "25", "label": "$25" },
-        { "value": "50", "label": "$50" }
-      ] },
+    { "type": "when",
+      "if": { "==": [ { "var": "local.bets_on" }, true ] },
+      "then": [
+        { "type": "select", "local": "bet", "label": "Bet",
+          "default": "10",
+          "options": [
+            { "value": "5",  "label": "$5"  },
+            { "value": "10", "label": "$10" },
+            { "value": "25", "label": "$25" },
+            { "value": "50", "label": "$50" }
+          ] },
 
-    { "type": "button", "label": "Deal", "style": "primary",
-      "action": { "type": "push",
-        "payload": { "action": "deal", "bet": "{{local.bet}}" } } },
+        { "type": "button", "label": "Deal", "style": "primary",
+          "action": { "type": "push",
+            "payload": { "action": "deal", "bet": "{{local.bet}}" } } },
+
+        { "type": "button", "label": "Double", "style": "secondary",
+          "action": { "type": "push", "payload": { "action": "double" } } }
+      ],
+      "else": [
+        { "type": "button", "label": "Deal", "style": "primary",
+          "action": { "type": "push", "payload": { "action": "deal" } } }
+      ] },
 
     { "type": "button", "label": "Hit", "style": "secondary",
       "action": { "type": "push", "payload": { "action": "hit" } } },
     { "type": "button", "label": "Stand", "style": "secondary",
       "action": { "type": "push", "payload": { "action": "stand" } } },
-    { "type": "button", "label": "Double (chips only)", "style": "secondary",
-      "action": { "type": "push", "payload": { "action": "double" } } },
 
     { "type": "divider" },
 
@@ -38,8 +47,14 @@
       "format": "Status: {}", "style": "body" },
     { "type": "state_text", "binding": "last_result",
       "default": "", "style": "caption" },
-    { "type": "state_text", "binding": "bank",
-      "format": "Bank: ${}", "style": "caption" },
+
+    { "type": "when",
+      "if": { "==": [ { "var": "local.bets_on" }, true ] },
+      "then": [
+        { "type": "state_text", "binding": "bank",
+          "format": "Bank: ${}", "style": "caption" }
+      ] },
+
     { "type": "row", "spacing": 12, "children": [
       { "type": "state_text", "binding": "wins",   "format": "W {}", "style": "caption" },
       { "type": "state_text", "binding": "losses", "format": "L {}", "style": "caption" },
@@ -47,7 +62,11 @@
       { "type": "state_text", "binding": "hands",  "format": "· #{}", "style": "caption" }
     ] },
 
-    { "type": "button", "label": "Reset bank to $100", "style": "secondary",
-      "action": { "type": "push", "payload": { "action": "reset_bank" } } }
+    { "type": "when",
+      "if": { "==": [ { "var": "local.bets_on" }, true ] },
+      "then": [
+        { "type": "button", "label": "Reset bank to $100", "style": "secondary",
+          "action": { "type": "push", "payload": { "action": "reset_bank" } } }
+      ] }
   ]
 }
