@@ -119,7 +119,7 @@ class Blackjack:
         self._last_result = ""
 
         # on_data runs on a request thread; render + _dealer_step run on the
-        # pwn-apps render thread. Lock anything that touches game state so a
+        # ink-cartridge render thread. Lock anything that touches game state so a
         # mid-render mutation can't hand a half-built list to PIL.
         self._lock = threading.RLock()
 

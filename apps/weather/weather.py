@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from PIL import ImageFont
 
-from pwn_apps_host import draw_wrapped
+from ink_cartridge_host import draw_wrapped
 
 
 # WMO weather code → short human phrase. From the Open-Meteo docs.

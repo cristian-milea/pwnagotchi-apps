@@ -9,7 +9,7 @@
 #     drawn twice in a row
 #
 # Push schema:
-#   POST /plugins/pwn-apps/push
+#   POST /plugins/ink-cartridge/push
 #   {"app": "magic8", "payload": {"action": "shake"}}
 #
 # Persistence: the lifetime counter is kept in /etc/pwnagotchi/magic8.state.json
@@ -22,7 +22,7 @@ from datetime import datetime
 
 from PIL import ImageFont
 
-from pwn_apps_host import wrap_text
+from ink_cartridge_host import wrap_text
 
 
 STATE_PATH = "/etc/pwnagotchi/magic8.state.json"

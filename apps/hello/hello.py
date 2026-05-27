@@ -4,11 +4,11 @@
 # and the shared wrap_text helper from the host plugin.
 #
 # Try it:
-#   POST /plugins/pwn-apps/push  {"app": "hello", "payload": {"text": "hi"}}
+#   POST /plugins/ink-cartridge/push  {"app": "hello", "payload": {"text": "hi"}}
 
 from PIL import ImageFont
 
-from pwn_apps_host import draw_wrapped_centered
+from ink_cartridge_host import draw_wrapped_centered
 
 
 class Hello:
