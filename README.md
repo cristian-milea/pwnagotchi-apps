@@ -1,6 +1,6 @@
 # pwnagotchi-apps
 
-Curated catalog of installable pwn-apps for the Buscar companion Android app.
+Curated catalog of installable pwn-apps for the Pwnagotchi companion Android app.
 
 The companion app fetches `index.json` and lets users browse + install apps
 with one tap. Apps are alternate-screen plugins for the

@@ -1,7 +1,7 @@
 {
   "name": "hello",
   "version": "1.1.0",
-  "author": "buscar",
+  "author": "cristian-milea",
   "description": "Minimal demo app — push text and it shows on the screen.",
   "schema_version": 1
 }

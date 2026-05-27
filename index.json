@@ -5,7 +5,7 @@
     {
       "name": "blackjack",
       "version": "1.1.1",
-      "author": "buscar",
+      "author": "cristian-milea",
       "description": "Blackjack 21. Buttons on the phone, cards on the e-ink.",
       "long_description": "Single-deck blackjack. Dealer stands on all 17s. Casual mode is just Deal/Hit/Stand with a lifetime W/L/P counter. Flip 'Play for chips' to add a bank (starts at $100), bet selection, and Double Down. State persists across restarts; mid-hand RAM only.",
       "category": "fun",
@@ -20,7 +20,7 @@
     {
       "name": "hello",
       "version": "1.1.0",
-      "author": "buscar",
+      "author": "cristian-milea",
       "description": "Minimal demo app — push text and it shows on the screen.",
       "long_description": "The simplest possible pwn-app. Useful as a template when building your own. Takes a string from the phone and displays it centered on the e-ink screen.",
       "category": "tools",
@@ -35,7 +35,7 @@
     {
       "name": "maze",
       "version": "1.6.0",
-      "author": "buscar",
+      "author": "cristian-milea",
       "description": "First-person maze crawler — random or daily-seeded mazes.",
       "long_description": "Generates a fresh maze on the device (recursive backtracker) and shows it in a Wizardry-style first-person view. Phone is a D-pad (Turn-left, Forward, Back, Turn-right); the e-ink draws the perspective walls plus a fog-of-war minimap that only reveals visited cells and what you can see straight down an open corridor. Two modes: random (new seed every time) and daily (everyone on every device gets the same maze each day). Find the exit in as few steps as the optimum.",
       "category": "fun",
@@ -50,7 +50,7 @@
     {
       "name": "magic8",
       "version": "1.3.0",
-      "author": "buscar",
+      "author": "cristian-milea",
       "description": "Magic 8-Ball. Tap Shake for an answer.",
       "long_description": "Classic Magic 8-Ball. Ask a yes/no question, tap Shake on the phone, and your fortune appears on the e-ink. The answer lives only on the e-ink — the phone is a remote.",
       "category": "fun",
@@ -65,7 +65,7 @@
     {
       "name": "tide-sun",
       "version": "1.3.0",
-      "author": "buscar",
+      "author": "cristian-milea",
       "description": "Sunrise/sunset and moon phase.",
       "long_description": "Shows today's sunrise and sunset times plus the current moon phase. Pulls daily sun data from Open-Meteo; moon phase is computed device-side using a Conway approximation. Phone-side UI is just a Sync control — the e-ink is the display.",
       "category": "info",
@@ -79,7 +79,7 @@
     {
       "name": "weather",
       "version": "1.4.0",
-      "author": "buscar",
+      "author": "cristian-milea",
       "description": "Current conditions + 12h rain forecast.",
       "long_description": "Current temperature, feels-like, and weather condition plus a 12-hour precipitation bar chart. Pulls forecast data from Open-Meteo (no API key needed). Phone-side UI is just a Sync control — the e-ink is the display.",
       "category": "info",

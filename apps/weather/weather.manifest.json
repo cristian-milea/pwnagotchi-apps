@@ -1,7 +1,7 @@
 {
   "name": "weather",
   "version": "1.4.0",
-  "author": "buscar",
+  "author": "cristian-milea",
   "description": "Current conditions + hourly precipitation forecast.",
   "requires": { "permissions": ["location"] },
   "data_source": {
