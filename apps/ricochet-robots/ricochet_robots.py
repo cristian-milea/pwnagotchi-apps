@@ -508,7 +508,7 @@ def _save_state(path, state):
 class RicochetRobots:
     name = "ricochet-robots"
     icon = "RR"
-    version = "1.0.1"
+    version = "1.0.2"
     interval_seconds = None
 
     def __init__(self):
@@ -723,7 +723,12 @@ class RicochetRobots:
         if shape == 0:
             draw.ellipse((a, b, c, d), **kw)
         elif shape == 1:
-            draw.rectangle((a, b, c, d), **kw)
+            # The square fills its bounding box to the corners, so it reads
+            # bigger than the other shapes and swallows the selection ring.
+            # Draw it at 70% (centered) so the border stays visible.
+            side = (c - a) * 7 // 10
+            off = ((c - a) - side) // 2
+            draw.rectangle((a + off, b + off, a + off + side, b + off + side), **kw)
         elif shape == 2:
             draw.polygon([((a + c) // 2, b), (a, d), (c, d)], **kw)
         elif shape == 3:

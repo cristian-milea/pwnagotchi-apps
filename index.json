@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-29T20:48:05Z",
+  "updated_at": "2026-05-29T21:01:54Z",
   "apps": [
     {
       "name": "blackjack",
@@ -81,7 +81,7 @@
     {
       "name": "ricochet-robots",
       "icon": "RR",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "cristian-milea",
       "description": "Ricochet Robots — slide a robot till it crashes; reach the target in the fewest moves.",
       "long_description": "A single-player take on the board game Ricochet Robots. Robots slide until they crash into a wall, the arena edge, the center block, or another robot — they never stop mid-track. Land the matching shape on its target cell in as few moves as the on-device solver's optimum. Colours become four distinct drawn shapes (circle / square / triangle / diamond) for the 1-bit e-ink. Boards are generated on the device with L-shaped walls and verified solvable by a breadth-first solver; pick Easy / Medium / Hard and a board size before generating. Random mode reseeds every time; daily mode gives everyone the same board for a given size and difficulty each day.",
@@ -95,7 +95,7 @@
         "manifest": "apps/ricochet-robots/ricochet_robots.manifest.json",
         "ui": "apps/ricochet-robots/ricochet_robots.ui.json"
       },
-      "size_bytes": 37571
+      "size_bytes": 37907
     },
     {
       "name": "tide-sun",
