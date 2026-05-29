@@ -1,14 +1,24 @@
 {
   "name": "weather",
+  "icon": "W",
   "version": "1.4.0",
   "author": "cristian-milea",
   "description": "Current conditions + hourly precipitation forecast.",
-  "requires": { "permissions": ["location"] },
+  "category": "info",
+  "long_description": "Current temperature, feels-like, and weather condition plus a 12-hour precipitation bar chart. Pulls forecast data from Open-Meteo (no API key needed). Phone-side UI is just a Sync control — the e-ink is the display.",
+  "requires": {
+    "permissions": [
+      "location"
+    ],
+    "secrets": []
+  },
   "data_source": {
     "type": "http",
     "method": "GET",
     "url": "https://api.open-meteo.com/v1/forecast?latitude={{location.lat}}&longitude={{location.lon}}&current=temperature_2m,apparent_temperature,weather_code&hourly=precipitation&forecast_hours=12&timezone=auto",
-    "needs": ["location"]
+    "needs": [
+      "location"
+    ]
   },
   "schema_version": 1
 }

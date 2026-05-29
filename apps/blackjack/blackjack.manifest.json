@@ -1,7 +1,10 @@
 {
   "name": "blackjack",
+  "icon": "BJ",
   "version": "1.1.1",
   "author": "cristian-milea",
   "description": "Blackjack 21 — buttons on the phone, cards on the e-ink.",
+  "category": "fun",
+  "long_description": "Single-deck blackjack. Dealer stands on all 17s. Casual mode is just Deal/Hit/Stand with a lifetime W/L/P counter. Flip 'Play for chips' to add a bank (starts at $100), bet selection, and Double Down. State persists across restarts; mid-hand RAM only.",
   "schema_version": 1
 }

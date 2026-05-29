@@ -1,7 +1,10 @@
 {
   "name": "magic8",
+  "icon": "8",
   "version": "1.3.0",
   "author": "cristian-milea",
   "description": "Magic 8-Ball. Tap Shake for an answer.",
+  "category": "fun",
+  "long_description": "Classic Magic 8-Ball. Ask a yes/no question, tap Shake on the phone, and your fortune appears on the e-ink. The answer lives only on the e-ink — the phone is a remote.",
   "schema_version": 1
 }

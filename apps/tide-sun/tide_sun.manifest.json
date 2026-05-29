@@ -1,14 +1,32 @@
 {
   "name": "tide-sun",
+  "icon": "TS",
   "version": "1.5.0",
   "author": "cristian-milea",
   "description": "Sunrise/sunset, moon, and a cached next-tides graph.",
-  "requires": { "permissions": ["location"], "secrets": ["worldtides"] },
+  "category": "info",
+  "long_description": "Top strip shows today's sunrise, sunset, and the moon phase on one line, in the location's local time. Below it, a tide graph auto-fits the next three high/low tides, marking each with its time; tap Prev / Next on the phone to step through the tides, and the e-ink notes when you cross into another day. Tides come from the WorldTides API (set a free 'worldtides' API key as a secret): one sync pulls a 7-day curve for ~1 credit and caches it on the device, so the app is manual-sync — tap Sync only when the data runs low. Sunrise/sunset and moon phase are computed device-side.",
+  "requires": {
+    "permissions": [
+      "location"
+    ],
+    "secrets": [
+      {
+        "key": "worldtides",
+        "label": "WorldTides API key",
+        "description": "Free API key from worldtides.info — powers the cached tide graph.",
+        "optional": false
+      }
+    ]
+  },
   "data_source": {
     "type": "http",
     "method": "GET",
     "url": "https://www.worldtides.info/api/v3?heights&lat={{location.lat}}&lon={{location.lon}}&start={{state.tide_start}}&length=604800&step=1800&key={{secret.worldtides}}",
-    "needs": ["location", "secret:worldtides"],
+    "needs": [
+      "location",
+      "secret:worldtides"
+    ],
     "auto_sync": false,
     "min_sync_seconds": 518400
   },

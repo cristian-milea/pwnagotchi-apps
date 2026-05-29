@@ -1,7 +1,10 @@
 {
   "name": "maze",
+  "icon": "MZ",
   "version": "1.6.1",
   "author": "cristian-milea",
   "description": "First-person maze crawler with random or daily-seeded mazes.",
+  "category": "fun",
+  "long_description": "Generates a fresh maze on the device (recursive backtracker) and shows it in a Wizardry-style first-person view. Phone is a D-pad (Turn-left, Forward, Back, Turn-right); the e-ink draws the perspective walls plus a fog-of-war minimap that only reveals visited cells and what you can see straight down an open corridor. Two modes: random (new seed every time) and daily (everyone on every device gets the same maze each day). Find the exit in as few steps as the optimum.",
   "schema_version": 1
 }

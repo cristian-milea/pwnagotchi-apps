@@ -1,8 +1,10 @@
 {
   "name": "vector-racing",
+  "icon": "VR",
   "version": "1.1.0",
   "author": "cristian-milea",
   "description": "Turn-based vector racing. 9-way pad on the phone, circuit on the e-ink.",
-  "requires": { "permissions": [], "secrets": [] },
+  "category": "fun",
+  "long_description": "Pen-and-paper Racetrack on the e-ink. Each turn you nudge your velocity by ±1 in x/y; momentum carries you, so brake before the corners or clip the wall. Procedurally generated closed circuits in nine flavours — oval, triangle, square, pentagon, hexagon, zigzag, scalloped, kidney, and self-crossing figure-8 — as a daily-seeded track everyone shares, or random. Pick Safe (stop on a crash) or Hardcore (back to the line) before the off, run 1–3 laps, and chase the computed optimum.",
   "schema_version": 1
 }

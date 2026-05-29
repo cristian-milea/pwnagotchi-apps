@@ -1,22 +1,25 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-28T00:00:00Z",
+  "updated_at": "2026-05-29T20:06:35Z",
   "apps": [
     {
       "name": "blackjack",
       "icon": "BJ",
       "version": "1.1.1",
       "author": "cristian-milea",
-      "description": "Blackjack 21. Buttons on the phone, cards on the e-ink.",
+      "description": "Blackjack 21 — buttons on the phone, cards on the e-ink.",
       "long_description": "Single-deck blackjack. Dealer stands on all 17s. Casual mode is just Deal/Hit/Stand with a lifetime W/L/P counter. Flip 'Play for chips' to add a bank (starts at $100), bet selection, and Double Down. State persists across restarts; mid-hand RAM only.",
       "category": "fun",
-      "requires": { "permissions": [], "secrets": [] },
-      "files": {
-        "py":       "apps/blackjack/blackjack.py",
-        "manifest": "apps/blackjack/blackjack.manifest.json",
-        "ui":       "apps/blackjack/blackjack.ui.json"
+      "requires": {
+        "permissions": [],
+        "secrets": []
       },
-      "size_bytes": 23962
+      "files": {
+        "py": "apps/blackjack/blackjack.py",
+        "manifest": "apps/blackjack/blackjack.manifest.json",
+        "ui": "apps/blackjack/blackjack.ui.json"
+      },
+      "size_bytes": 24289
     },
     {
       "name": "hello",
@@ -26,29 +29,16 @@
       "description": "Minimal demo app — push text and it shows on the screen.",
       "long_description": "The simplest possible pwn-app. Useful as a template when building your own. Takes a string from the phone and displays it centered on the e-ink screen.",
       "category": "tools",
-      "requires": { "permissions": [], "secrets": [] },
+      "requires": {
+        "permissions": [],
+        "secrets": []
+      },
       "files": {
-        "py":       "apps/hello/hello.py",
+        "py": "apps/hello/hello.py",
         "manifest": "apps/hello/hello.manifest.json",
-        "ui":       "apps/hello/hello.ui.json"
+        "ui": "apps/hello/hello.ui.json"
       },
-      "size_bytes": 1805
-    },
-    {
-      "name": "maze",
-      "icon": "MZ",
-      "version": "1.6.1",
-      "author": "cristian-milea",
-      "description": "First-person maze crawler — random or daily-seeded mazes.",
-      "long_description": "Generates a fresh maze on the device (recursive backtracker) and shows it in a Wizardry-style first-person view. Phone is a D-pad (Turn-left, Forward, Back, Turn-right); the e-ink draws the perspective walls plus a fog-of-war minimap that only reveals visited cells and what you can see straight down an open corridor. Two modes: random (new seed every time) and daily (everyone on every device gets the same maze each day). Find the exit in as few steps as the optimum.",
-      "category": "fun",
-      "requires": { "permissions": [], "secrets": [] },
-      "files": {
-        "py":       "apps/maze/maze.py",
-        "manifest": "apps/maze/maze.manifest.json",
-        "ui":       "apps/maze/maze.ui.json"
-      },
-      "size_bytes": 39153
+      "size_bytes": 2039
     },
     {
       "name": "magic8",
@@ -58,13 +48,35 @@
       "description": "Magic 8-Ball. Tap Shake for an answer.",
       "long_description": "Classic Magic 8-Ball. Ask a yes/no question, tap Shake on the phone, and your fortune appears on the e-ink. The answer lives only on the e-ink — the phone is a remote.",
       "category": "fun",
-      "requires": { "permissions": [], "secrets": [] },
-      "files": {
-        "py":       "apps/magic8/magic8.py",
-        "manifest": "apps/magic8/magic8.manifest.json",
-        "ui":       "apps/magic8/magic8.ui.json"
+      "requires": {
+        "permissions": [],
+        "secrets": []
       },
-      "size_bytes": 5516
+      "files": {
+        "py": "apps/magic8/magic8.py",
+        "manifest": "apps/magic8/magic8.manifest.json",
+        "ui": "apps/magic8/magic8.ui.json"
+      },
+      "size_bytes": 5470
+    },
+    {
+      "name": "maze",
+      "icon": "MZ",
+      "version": "1.6.1",
+      "author": "cristian-milea",
+      "description": "First-person maze crawler with random or daily-seeded mazes.",
+      "long_description": "Generates a fresh maze on the device (recursive backtracker) and shows it in a Wizardry-style first-person view. Phone is a D-pad (Turn-left, Forward, Back, Turn-right); the e-ink draws the perspective walls plus a fog-of-war minimap that only reveals visited cells and what you can see straight down an open corridor. Two modes: random (new seed every time) and daily (everyone on every device gets the same maze each day). Find the exit in as few steps as the optimum.",
+      "category": "fun",
+      "requires": {
+        "permissions": [],
+        "secrets": []
+      },
+      "files": {
+        "py": "apps/maze/maze.py",
+        "manifest": "apps/maze/maze.manifest.json",
+        "ui": "apps/maze/maze.ui.json"
+      },
+      "size_bytes": 39686
     },
     {
       "name": "tide-sun",
@@ -74,28 +86,25 @@
       "description": "Sunrise/sunset, moon, and a cached next-tides graph.",
       "long_description": "Top strip shows today's sunrise, sunset, and the moon phase on one line, in the location's local time. Below it, a tide graph auto-fits the next three high/low tides, marking each with its time; tap Prev / Next on the phone to step through the tides, and the e-ink notes when you cross into another day. Tides come from the WorldTides API (set a free 'worldtides' API key as a secret): one sync pulls a 7-day curve for ~1 credit and caches it on the device, so the app is manual-sync — tap Sync only when the data runs low. Sunrise/sunset and moon phase are computed device-side.",
       "category": "info",
-      "requires": { "permissions": ["location"], "secrets": ["worldtides"] },
+      "requires": {
+        "permissions": [
+          "location"
+        ],
+        "secrets": [
+          {
+            "key": "worldtides",
+            "label": "WorldTides API key",
+            "description": "Free API key from worldtides.info — powers the cached tide graph.",
+            "optional": false
+          }
+        ]
+      },
       "files": {
-        "py":       "apps/tide-sun/tide_sun.py",
+        "py": "apps/tide-sun/tide_sun.py",
         "manifest": "apps/tide-sun/tide_sun.manifest.json",
-        "ui":       "apps/tide-sun/tide_sun.ui.json"
+        "ui": "apps/tide-sun/tide_sun.ui.json"
       },
-      "size_bytes": 17846
-    },
-    {
-      "name": "weather",
-      "icon": "W",
-      "version": "1.4.0",
-      "author": "cristian-milea",
-      "description": "Current conditions + 12h rain forecast.",
-      "long_description": "Current temperature, feels-like, and weather condition plus a 12-hour precipitation bar chart. Pulls forecast data from Open-Meteo (no API key needed). Phone-side UI is just a Sync control — the e-ink is the display.",
-      "category": "info",
-      "requires": { "permissions": ["location"], "secrets": [] },
-      "files": {
-        "py":       "apps/weather/weather.py",
-        "manifest": "apps/weather/weather.manifest.json"
-      },
-      "size_bytes": 7612
+      "size_bytes": 18728
     },
     {
       "name": "vector-racing",
@@ -105,13 +114,36 @@
       "description": "Turn-based vector racing. 9-way pad on the phone, circuit on the e-ink.",
       "long_description": "Pen-and-paper Racetrack on the e-ink. Each turn you nudge your velocity by ±1 in x/y; momentum carries you, so brake before the corners or clip the wall. Procedurally generated closed circuits in nine flavours — oval, triangle, square, pentagon, hexagon, zigzag, scalloped, kidney, and self-crossing figure-8 — as a daily-seeded track everyone shares, or random. Pick Safe (stop on a crash) or Hardcore (back to the line) before the off, run 1–3 laps, and chase the computed optimum.",
       "category": "fun",
-      "requires": { "permissions": [], "secrets": [] },
-      "files": {
-        "py":       "apps/vector-racing/vector_racing.py",
-        "manifest": "apps/vector-racing/vector-racing.manifest.json",
-        "ui":       "apps/vector-racing/vector-racing.ui.json"
+      "requires": {
+        "permissions": [],
+        "secrets": []
       },
-      "size_bytes": 40834
+      "files": {
+        "py": "apps/vector-racing/vector_racing.py",
+        "manifest": "apps/vector-racing/vector-racing.manifest.json",
+        "ui": "apps/vector-racing/vector-racing.ui.json"
+      },
+      "size_bytes": 41335
+    },
+    {
+      "name": "weather",
+      "icon": "W",
+      "version": "1.4.0",
+      "author": "cristian-milea",
+      "description": "Current conditions + hourly precipitation forecast.",
+      "long_description": "Current temperature, feels-like, and weather condition plus a 12-hour precipitation bar chart. Pulls forecast data from Open-Meteo (no API key needed). Phone-side UI is just a Sync control — the e-ink is the display.",
+      "category": "info",
+      "requires": {
+        "permissions": [
+          "location"
+        ],
+        "secrets": []
+      },
+      "files": {
+        "py": "apps/weather/weather.py",
+        "manifest": "apps/weather/weather.manifest.json"
+      },
+      "size_bytes": 8341
     }
   ]
 }
