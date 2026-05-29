@@ -172,7 +172,7 @@ def _initial_facing(cells):
 class Maze:
     name = "maze"
     icon = "MZ"
-    version = "1.6.0"
+    version = "1.6.1"
 
     interval_seconds = None
 
@@ -617,8 +617,10 @@ class Maze:
         prev_left = True   # screen edge already provides a "wall" at d=0
         prev_right = True
         closed = False
-        exit_drawn_at = None  # depth where the X marker was drawn
-        torch_drawn = False
+        # Markers are recorded here and painted *after* the wall loop so a
+        # closing wall filling the same frame can't erase them.
+        exit_far = None
+        torch_far = None
         torch_x = torch_render.get("x")
         torch_y = torch_render.get("y")
         torch_visible = (torch_x is not None and not torch_render.get("found"))
@@ -645,16 +647,14 @@ class Maze:
                                  near_post=(d > 0 and not prev_right))
 
             # Exit marker — only meaningful in cells the player can see
-            # ahead (d>=1). Drawn at the far edge so it appears to recede.
-            if d >= 1 and (tx, ty) == (ex, ey) and exit_drawn_at is None:
-                self._exit_marker(draw, far)
-                exit_drawn_at = d
+            # ahead (d>=1). Recorded at the far edge so it appears to recede.
+            if d >= 1 and (tx, ty) == (ex, ey) and exit_far is None:
+                exit_far = far
 
             # Torch — same rule: only when directly down the visible corridor.
-            if (d >= 1 and torch_visible and not torch_drawn
+            if (d >= 1 and torch_visible and torch_far is None
                     and (tx, ty) == (torch_x, torch_y)):
-                self._torch_marker(draw, far)
-                torch_drawn = True
+                torch_far = far
 
             if has_front:
                 self._closing_wall(draw, far)
@@ -666,6 +666,13 @@ class Maze:
 
         if not closed:
             self._closing_wall(draw, frames[MAX_DEPTH])
+
+        # Paint markers last so the closing wall of their own cell (or the far
+        # vanishing wall) doesn't paint over them.
+        if exit_far is not None:
+            self._exit_marker(draw, exit_far)
+        if torch_far is not None:
+            self._torch_marker(draw, torch_far)
 
         # Tiny compass letter in the top-left corner of the view.
         cf = self._font(8)
@@ -709,21 +716,33 @@ class Maze:
         draw.line((cxp - size, cyp - size, cxp + size, cyp + size), fill=0)
         draw.line((cxp + size, cyp - size, cxp - size, cyp + size), fill=0)
 
-    def _dashed_rect(self, draw, x0, y0, x1, y1, dash=2, gap=2):
-        """Draw a dashed rectangle outline (used for the torch halo border)."""
-        step = dash + gap
-        x = x0
-        while x <= x1:
-            end = min(x + dash - 1, x1)
-            draw.line((x, y0, end, y0), fill=0)
-            draw.line((x, y1, end, y1), fill=0)
-            x += step
-        y = y0
-        while y <= y1:
-            end = min(y + dash - 1, y1)
-            draw.line((x0, y, x0, end), fill=0)
-            draw.line((x1, y, x1, end), fill=0)
-            y += step
+    def _dotted_line(self, draw, x0, y0, x1, y1, step=2):
+        """Dot an axis-aligned segment (single pixels every `step`)."""
+        x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+        if y0 == y1:
+            for x in range(x0, x1 + 1, step):
+                draw.point((x, y0), fill=0)
+        else:
+            for y in range(y0, y1 + 1, step):
+                draw.point((x0, y), fill=0)
+
+    def _torch_halo_outline(self, draw, lit, ox, oy, cs):
+        """Dot the perimeter of the lit region: for each lit cell, dot only the
+        edges whose neighbour is unlit (or off-grid). Shared interior edges
+        stay blank, so the illuminated area reads as one outlined blob."""
+        for (lx, ly) in lit:
+            cx0 = ox + lx * cs
+            cy0 = oy + ly * cs
+            cx1 = cx0 + cs
+            cy1 = cy0 + cs
+            if (lx, ly - 1) not in lit:
+                self._dotted_line(draw, cx0, cy0, cx1, cy0)
+            if (lx, ly + 1) not in lit:
+                self._dotted_line(draw, cx0, cy1, cx1, cy1)
+            if (lx - 1, ly) not in lit:
+                self._dotted_line(draw, cx0, cy0, cx0, cy1)
+            if (lx + 1, ly) not in lit:
+                self._dotted_line(draw, cx1, cy0, cx1, cy1)
 
     def _torch_marker(self, draw, far_frame):
         # A "T" shape — flame on top, handle below — clearly distinct from
@@ -820,7 +839,10 @@ class Maze:
             if torch_x is not None and not torch_render.get("found"):
                 ddx, ddy = DIRS[facing]
                 sx, sy = px, py
-                for _ in range(FPV_MAX_DEPTH):
+                # Match the FPV's reachable depth: it can only draw the torch
+                # at distances 1..FPV_MAX_DEPTH-1, so don't hint a torch the
+                # 3D view won't show.
+                for _ in range(FPV_MAX_DEPTH - 1):
                     if cells[sy][sx] & WALL_BITS[facing]:
                         break
                     sx += ddx
@@ -841,40 +863,12 @@ class Maze:
                             draw.point((txp + cs // 2, typ + cs // 2), fill=0)
                         break
 
-            # Torch-active overlays — only while the player is carrying a
-            # burning torch. Distinguishes "lit now" cells from "remembered"
-            # cells and telegraphs the halo's reach.
+            # Torch-active overlay — only while the player carries a burning
+            # torch. A single dotted line traces the perimeter of the lit
+            # region (3x3 halo plus the forward corridor sight), telegraphing
+            # the torch's reach without cluttering every cell.
             if torch_render.get("lit_now"):
-                # 3-pixel L tick in each corner of every currently-lit cell,
-                # inset by 1 px so the wall lines stay legible underneath.
-                for (lx, ly) in visible:
-                    if (lx, ly) == (px, py):
-                        continue  # the player triangle owns this cell
-                    cxp = ox + lx * cs
-                    cyp = oy + ly * cs
-                    # top-left
-                    draw.point((cxp + 1, cyp + 1), fill=0)
-                    draw.point((cxp + 2, cyp + 1), fill=0)
-                    draw.point((cxp + 1, cyp + 2), fill=0)
-                    # top-right
-                    draw.point((cxp + cs - 2, cyp + 1), fill=0)
-                    draw.point((cxp + cs - 3, cyp + 1), fill=0)
-                    draw.point((cxp + cs - 2, cyp + 2), fill=0)
-                    # bottom-left
-                    draw.point((cxp + 1, cyp + cs - 2), fill=0)
-                    draw.point((cxp + 2, cyp + cs - 2), fill=0)
-                    draw.point((cxp + 1, cyp + cs - 3), fill=0)
-                    # bottom-right
-                    draw.point((cxp + cs - 2, cyp + cs - 2), fill=0)
-                    draw.point((cxp + cs - 3, cyp + cs - 2), fill=0)
-                    draw.point((cxp + cs - 2, cyp + cs - 3), fill=0)
-
-                # Dashed bounding box around the 3x3 halo at the player.
-                hx0 = max(ox, ox + (px - 1) * cs)
-                hy0 = max(oy, oy + (py - 1) * cs)
-                hx1 = min(ox + tmw, ox + (px + 2) * cs) - 1
-                hy1 = min(oy + tmh, oy + (py + 2) * cs) - 1
-                self._dashed_rect(draw, hx0, hy0, hx1, hy1)
+                self._torch_halo_outline(draw, visible, ox, oy, cs)
 
             # Player — triangular arrow showing facing.
             pxp = ox + px * cs
