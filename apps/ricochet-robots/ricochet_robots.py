@@ -508,12 +508,17 @@ def _save_state(path, state):
 class RicochetRobots:
     name = "ricochet-robots"
     icon = "RR"
-    version = "1.0.0"
+    version = "1.0.1"
     interval_seconds = None
 
     def __init__(self):
         self._lock = threading.RLock()
         self._fonts = {}
+        # Deferred-generation state machine (see render/on_data). on_data only
+        # queues a request; the render thread flashes "Generating..." then builds
+        # the board on the next pass.
+        self._pending = None      # ("random"|"daily", size, difficulty) | None
+        self._gen_phase = None    # None | "announce" | "generate"
         s = _load_state(STATE_PATH)
         self._best_random = s.get("best_random") or {}
         self._best_daily = s.get("best_daily") or {}
@@ -536,14 +541,16 @@ class RicochetRobots:
             self._mode = "random"
             self._new_board("random", 8, "medium")
 
-    def _new_board(self, mode, size, difficulty):
+    def _resolve(self, mode, size, difficulty):
         size = size if size in SIZES else 8
         difficulty = difficulty if difficulty in ("easy", "medium", "hard") else "medium"
         if mode == "daily":
             seed = _seed_for(size, difficulty, _daily_seed())
         else:
             seed = int(time.time() * 1000) & 0x7FFFFFFF
-        b = generate_board(size, difficulty, seed)
+        return size, difficulty, seed
+
+    def _apply_board(self, mode, b):
         self._mode = mode
         self._size = b["size"]
         self._difficulty = b["difficulty"]
@@ -559,6 +566,13 @@ class RicochetRobots:
         self._completed = False
         self._selected = self._target[0] if self._target[0] != WILDCARD else 0
         self._persist()
+
+    def _new_board(self, mode, size, difficulty):
+        """Synchronous generate — used only at first launch, where there is no
+        UI yet to flash a 'Generating...' frame to. Interactive new-board taps
+        go through the deferred path in on_data/render instead."""
+        sz, df, seed = self._resolve(mode, size, difficulty)
+        self._apply_board(mode, generate_board(sz, df, seed))
 
     def _persist(self):
         _save_state(STATE_PATH, {
@@ -672,8 +686,14 @@ class RicochetRobots:
                 except (TypeError, ValueError):
                     size = 8
                 difficulty = payload.get("difficulty", "medium")
-                self._new_board("daily" if action == "new_daily" else "random",
-                                size, difficulty)
+                # Queue only — the render thread generates (see render). This
+                # returns instantly so the push response isn't blocked, and rapid
+                # repeat taps just overwrite the request instead of generating a
+                # board per tap.
+                self._pending = ("daily" if action == "new_daily" else "random",
+                                 size, difficulty)
+                self._gen_phase = "announce"
+                self.interval_seconds = 0.05  # nudge the render loop to re-fire
                 return True
         return False
 
@@ -711,12 +731,52 @@ class RicochetRobots:
                           ((a + c) // 2, d), (a, (b + d) // 2)], **kw)
 
     def render(self, draw, w, h):
+        # Deferred board generation. A new-board tap only sets self._pending +
+        # phase "announce". The first render after that paints "Generating..."
+        # and flips to "generate"; the *next* render actually builds the board —
+        # so the wait frame reaches the e-ink before the (possibly multi-second)
+        # search begins. Generation runs WITHOUT the lock so on_data never blocks.
+        with self._lock:
+            pending, phase = self._pending, self._gen_phase
+        if pending is not None and phase == "announce":
+            with self._lock:
+                self._gen_phase = "generate"
+            try:
+                self._paint_generating(draw, w, h, pending)
+            except Exception:
+                logging.exception("ricochet_robots: generating frame failed")
+            return
+        if pending is not None and phase == "generate":
+            mode, size, difficulty = pending
+            board = None
+            try:
+                sz, df, seed = self._resolve(mode, size, difficulty)
+                board = generate_board(sz, df, seed)
+            except Exception:
+                logging.exception("ricochet_robots: generation failed")
+            with self._lock:
+                if board is not None:
+                    self._apply_board(mode, board)
+                if self._pending == pending:  # no newer tap arrived during generation
+                    self._pending = None
+                    self._gen_phase = None
+                    self.interval_seconds = None
         with self._lock:
             try:
                 self._paint(draw, w, h)
             except Exception:
                 logging.exception("ricochet_robots: render failed")
                 draw.text((4, 4), "RICOCHET — render error", font=self._font(10), fill=0)
+
+    def _paint_generating(self, draw, w, h, pending):
+        big = self._font(14)
+        fs = self._font(9)
+        msg = "Generating..."
+        mw = int(draw.textlength(msg, font=big))
+        draw.text(((w - mw) // 2, h // 2 - 14), msg, font=big, fill=0)
+        sub = f"{pending[1]}x{pending[1]}  {pending[2]}"
+        sw = int(draw.textlength(sub, font=fs))
+        draw.text(((w - sw) // 2, h // 2 + 6), sub, font=fs, fill=0)
 
     def _paint(self, draw, w, h):
         n = self._size

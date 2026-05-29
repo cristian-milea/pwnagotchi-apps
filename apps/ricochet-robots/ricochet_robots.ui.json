@@ -7,14 +7,19 @@
     { "type": "text", "style": "caption",
       "value": "Pick a robot, then push a direction — it slides until it hits a wall, the edge, the center block, or another robot. Land the matching shape on its target in the fewest moves." },
 
-    { "type": "select", "local": "robot", "label": "Robot", "default": "0",
-      "options": [
-        { "value": "0", "label": "● Circle" },
-        { "value": "1", "label": "■ Square" },
-        { "value": "2", "label": "▲ Triangle" },
-        { "value": "3", "label": "◆ Diamond" }
-      ],
-      "action": { "type": "push", "payload": { "action": "select", "robot": "{{local.robot}}" } } },
+    { "type": "text", "value": "Robot to move", "style": "caption" },
+    { "type": "row", "spacing": 8, "align": "center", "children": [
+      { "type": "button", "label": "● Circle", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "select", "robot": "0" } } },
+      { "type": "button", "label": "■ Square", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "select", "robot": "1" } } }
+    ] },
+    { "type": "row", "spacing": 8, "align": "center", "children": [
+      { "type": "button", "label": "▲ Triangle", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "select", "robot": "2" } } },
+      { "type": "button", "label": "◆ Diamond", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "select", "robot": "3" } } }
+    ] },
 
     { "type": "row", "spacing": 8, "align": "center", "children": [
       { "type": "button", "label": "←", "style": "secondary",

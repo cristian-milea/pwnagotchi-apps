@@ -1,7 +1,7 @@
 {
   "name": "ricochet-robots",
   "icon": "RR",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "cristian-milea",
   "description": "Ricochet Robots — slide a robot till it crashes; reach the target in the fewest moves.",
   "category": "fun",

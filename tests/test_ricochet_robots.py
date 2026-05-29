@@ -274,12 +274,59 @@ def test_undo_then_restart(monkeypatch, tmp_path):
     assert g._robots == [(0, 3), (0, 7), (7, 7), (7, 0)] and g._moves == 0
 
 
+def _materialize(g):
+    """Drive the two deferred-render passes (announce, then generate)."""
+    img = Image.new("1", (234, 122), 1)
+    g.render(ImageDraw.Draw(img), 234, 122)  # announce
+    g.render(ImageDraw.Draw(img), 234, 122)  # generate + paint
+
+
+def test_move_moves_the_selected_robot(monkeypatch, tmp_path):
+    g = _fresh_game(monkeypatch, tmp_path)
+    g._size = 8
+    g._cells = _empty(8)
+    g._blocked = set()
+    g._robots = [(0, 0), (0, 4), (7, 7), (3, 7)]
+    g._robot_start = list(g._robots)
+    g._target = (2, 1, 1)
+    g._moves = 0
+    g._history = []
+    g._completed = False
+    g.on_data({"action": "select", "robot": "1"})
+    assert g._selected == 1
+    g.on_data({"action": "move", "dir": "right"})
+    assert g._robots[1] == (7, 4)   # the SELECTED robot slid east
+    assert g._robots[0] == (0, 0)   # robot 0 untouched (the reported bug)
+
+
+def test_new_board_is_deferred_then_generated(monkeypatch, tmp_path):
+    g = _fresh_game(monkeypatch, tmp_path)
+    before_seed = g._seed
+    assert g.on_data({"action": "new_random", "size": "12", "difficulty": "medium"}) is True
+    # on_data only queued the work — nothing generated yet.
+    assert g._pending == ("random", 12, "medium")
+    assert g._gen_phase == "announce"
+    assert g.interval_seconds == 0.05
+    assert g._seed == before_seed
+    img = Image.new("1", (234, 122), 1)
+    g.render(ImageDraw.Draw(img), 234, 122)            # announce frame
+    assert g._gen_phase == "generate" and g._pending is not None
+    assert img.getextrema()[0] == 0                    # "Generating..." drawn
+    g.render(ImageDraw.Draw(img), 234, 122)            # generate
+    assert g._pending is None
+    assert g.interval_seconds is None
+    assert g._size == 12 and g._difficulty == "medium" and g._moves == 0
+
+
 def test_new_daily_is_reproducible(monkeypatch, tmp_path):
     g = _fresh_game(monkeypatch, tmp_path)
     g.on_data({"action": "new_daily", "size": "8", "difficulty": "easy"})
+    _materialize(g)
     seed1, cells1 = g._seed, [row[:] for row in g._cells]
     g.on_data({"action": "new_random", "size": "8", "difficulty": "hard"})
+    _materialize(g)
     g.on_data({"action": "new_daily", "size": "8", "difficulty": "easy"})
+    _materialize(g)
     assert g._seed == seed1
     assert g._cells == cells1
 
@@ -310,6 +357,8 @@ def test_render_all_sizes(monkeypatch, tmp_path):
     g = _fresh_game(monkeypatch, tmp_path)
     for size in rr.SIZES:
         g.on_data({"action": "new_random", "size": str(size), "difficulty": "easy"})
+        _materialize(g)  # announce + generate
+        assert g._size == size
         img = Image.new("1", (234, 122), 1)
         g.render(ImageDraw.Draw(img), 234, 122)
         assert img.getextrema()[0] == 0

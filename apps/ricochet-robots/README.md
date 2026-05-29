@@ -287,8 +287,7 @@ column on the right.**
 ```
 column
 ├─ text  "Ricochet Robots" (headline) + caption
-├─ select  local=robot   → push {action:"select", robot:"{{local.robot}}"}
-│          options: Circle / Square / Triangle / Diamond
+├─ "Robot to move": 4 buttons ●/■/▲/◆ → push {action:"select", robot:"0..3"}
 ├─ row (D-pad)
 │   ←  ↑/↓  →   → push {action:"move", dir:"left|up|down|right"}   (moves selected robot)
 ├─ row:  [Undo] {action:"undo"}     [Restart] {action:"restart"}
@@ -301,10 +300,28 @@ column
 └─ state_text bindings: status, mode, target_shape, selected, moves, optimal, best
 ```
 
+Robot selection is **explicit buttons**, not a dropdown: a `select` widget only
+writes local state (the host schema gives it no `action`), so the dropdown's
+push was silently dropped and only robot 0 ever moved. The shape buttons push
+`select` directly, which also updates the e-ink selection ring immediately.
+The difficulty/size `select`s are fine as dropdowns because their values are
+templated into the new-board buttons' payloads (the proven blackjack pattern).
+
 `on_data` actions: `select`, `move`, `undo`, `restart`, `new_random`,
-`new_daily`. `move` applies `slide`, pushes onto `history`, increments `moves`,
-checks win; `undo` pops `history`; `restart` resets `robots = robot_start`,
-`moves = 0`, clears `history`, `completed = false`.
+`new_daily`. `move` reads the active robot, applies `slide`, pushes onto
+`history`, increments `moves`, checks win; `undo` pops `history`; `restart`
+resets `robots = robot_start`, `moves = 0`, clears `history`,
+`completed = false`.
+
+**Deferred generation (the "Generating..." frame).** `on_data` runs on the web
+thread and the e-ink is painted by a separate render thread, so generating
+inside `on_data` would block the push response and paint nothing until it
+finished. Instead, a new-board tap only *queues* the request (`self._pending`,
+phase `"announce"`, `interval_seconds = 0.05`). The render thread then does two
+passes: the first paints **"Generating..."** and flips to phase `"generate"`;
+the second actually builds the board (lock-free, so `on_data` never blocks) and
+paints it. Rapid repeat taps just overwrite `self._pending`, so you get **one**
+generation for the latest request instead of a board per tap.
 
 ---
 
