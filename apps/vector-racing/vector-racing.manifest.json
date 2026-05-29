@@ -1,6 +1,6 @@
 {
   "name": "vector-racing",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "cristian-milea",
   "description": "Turn-based vector racing. 9-way pad on the phone, circuit on the e-ink.",
   "requires": { "permissions": [], "secrets": [] },

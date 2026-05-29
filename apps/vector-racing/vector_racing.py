@@ -14,12 +14,17 @@
 #   the straight segment p→target must lie entirely on-track (supercover line,
 #   so corner-cutting is caught). Clean → p ← target; else → crash(mode).
 #
-# Lap detection: cumulative *winding angle* around the track centre. A full
-# forward revolution = one lap; backward winding never decrements completed
-# laps; oscillating at the line nets ~0. This is the robust realisation of the
-# spec's "cross the start/finish line forward" rule — the literal line-cross
-# rule is cheesable (step back over the line, then forward = a fake lap) and
-# would poison the BFS optimum. Live game and BFS share this logic.
+# Track = a CENTRELINE (closed polyline, possibly self-crossing for a
+# figure-8) thickened into a tube of width TRACK_W via distance-to-path. Shapes
+# are drawn from a seeded library (oval / triangle / square / pentagon /
+# hexagon / zigzag / scalloped / figure-8 / kidney) so daily players share one.
+#
+# Laps are detected by ORDERED CHECKPOINT GATES along the centreline, not by
+# winding angle: each gate is a full-width slice; a forward crossing of the
+# next expected gate advances progress; completing a full ring of gates = a
+# lap. Carrying the gate index in BFS/game state is what makes a self-crossing
+# figure-8 work (the two passes hit different gates, in order) and kills the
+# oscillate-at-the-line cheese that a literal line-cross rule allows.
 #
 # Push schema (phone → device):
 #   {"action": "start",   "mode": "daily"|"random",
@@ -42,26 +47,20 @@ from PIL import ImageFont
 
 STATE_PATH = "/etc/pwnagotchi/vector_racing.state.json"
 
-# ---- tunable constants (spec §12) ----
-VMAX = 3            # per-component velocity clamp
-LW, LH = 36, 20     # logical lattice size
-TRACK_W = 3         # nominal band width (cells)
-TRACK_W_MIN = 2     # minimum allowed band width (validation)
-MIN_STRAIGHT = 6    # min length of a "straight" run; need >= 2 of them
-RESEED_CAP = 64     # generation retries before falling back to a plain oval
-DEFAULT_LAPS = 2    # starting lap selection
-
-# Winding is discretised into S sectors around the centre. A move is short
-# relative to the loop, so it crosses at most ~2 sector boundaries; the wrap
-# below tolerates up to S/2. A full forward loop sums to exactly +S sectors.
-S_SECTORS = 12
-
-# Track-centre, ellipse base radii (derived from the lattice with a margin).
-CX, CY = LW / 2.0, LH / 2.0
-OUTER_A = LW / 2.0 - 3.0   # 15.0
-OUTER_B = LH / 2.0 - 3.0   # 7.0
-
+# ---- tunable constants ----
+VMAX = 3              # per-component velocity clamp
+LW, LH = 36, 20       # logical lattice size
+TRACK_W = 4           # nominal band width (cells); HALF_W is the tube radius
+HALF_W = TRACK_W / 2.0
+RESEED_CAP = 64       # generation retries before falling back to a plain oval
+DEFAULT_LAPS = 2
+MARGIN = 3            # lattice cells kept clear around the track
 TRAIL_CAP = 256
+
+CX, CY = LW / 2.0, LH / 2.0
+
+SHAPES = ["ellipse", "triangle", "square", "pentagon", "hexagon",
+          "zigzag", "wavy", "figure8", "kidney"]
 
 
 def _clamp(v, lo, hi):
@@ -91,68 +90,33 @@ def _daily_seed():
     return date.today().toordinal()
 
 
-# ---- ring geometry ----
+# ---- geometry helpers ----
 
-def _ring_params(seed):
-    """Perturbed-ring track. Outer boundary = ellipse radius times a small
-    seeded low-frequency noise; inner boundary = outer shrunk by TRACK_W
-    radially (guarantees a continuous band of controlled width)."""
-    rng = random.Random(seed)
-    harmonics = []
-    # 2-3 low-frequency sinusoids; small amplitude so the band never pinches
-    # off and the outer boundary stays inside the lattice.
-    for _ in range(rng.randint(2, 3)):
-        freq = rng.randint(2, 4)
-        amp = rng.uniform(0.03, 0.06)
-        phase = rng.uniform(0.0, 2.0 * math.pi)
-        harmonics.append((amp, freq, phase))
-    return {"a": OUTER_A, "b": OUTER_B, "harmonics": harmonics}
+def _dist(a, b):
+    return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def _r_out(params, theta):
-    a, b = params["a"], params["b"]
-    ct, st = math.cos(theta), math.sin(theta)
-    ell = (a * b) / math.sqrt((b * ct) ** 2 + (a * st) ** 2)
-    noise = 0.0
-    for amp, freq, phase in params["harmonics"]:
-        noise += amp * math.sin(freq * theta + phase)
-    return ell * (1.0 + noise)
+def _pt_seg_dist2(px, py, ax, ay, bx, by):
+    dx, dy = bx - ax, by - ay
+    if dx == 0 and dy == 0:
+        return (px - ax) ** 2 + (py - ay) ** 2
+    t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
+    t = 0.0 if t < 0 else 1.0 if t > 1 else t
+    cx, cy = ax + t * dx, ay + t * dy
+    return (px - cx) ** 2 + (py - cy) ** 2
 
 
-def _r_in(params, theta):
-    return _r_out(params, theta) - TRACK_W
+def _ccw(ax, ay, bx, by, cx, cy):
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
 
 
-def _on_track_pt(params, x, y):
-    dx, dy = x - CX, y - CY
-    rho = math.hypot(dx, dy)
-    if rho < 1e-6:
-        return False
-    theta = math.atan2(dy, dx)
-    return _r_in(params, theta) <= rho <= _r_out(params, theta)
-
-
-def _build_grid(params):
-    """Boolean on-track grid[y][x] for fast O(1) lookups in BFS / collision."""
-    return [[_on_track_pt(params, x, y) for x in range(LW)] for y in range(LH)]
-
-
-def _sector(x, y):
-    theta = math.atan2(y - CY, x - CX)
-    if theta < 0:
-        theta += 2.0 * math.pi
-    return int(theta / (2.0 * math.pi / S_SECTORS))
-
-
-def _wrap_sector(d):
-    """Fold a sector delta into (-S/2, S/2] so a short move reads as the small
-    signed number of sectors it actually swept (CCW positive)."""
-    half = S_SECTORS // 2
-    while d > half:
-        d -= S_SECTORS
-    while d <= -half:
-        d += S_SECTORS
-    return d
+def _segments_cross(ax, ay, bx, by, cx, cy, dx, dy):
+    """Proper crossing of segment AB and segment CD (collinear/touch → False)."""
+    d1 = _ccw(cx, cy, dx, dy, ax, ay)
+    d2 = _ccw(cx, cy, dx, dy, bx, by)
+    d3 = _ccw(ax, ay, bx, by, cx, cy)
+    d4 = _ccw(ax, ay, bx, by, dx, dy)
+    return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
 
 
 def _supercover(x0, y0, x1, y1):
@@ -193,8 +157,6 @@ def _seg_on_track(grid, x0, y0, x1, y1):
 
 
 def _last_on_track(grid, x0, y0, x1, y1):
-    """Last on-track lattice point along the attempted segment (for Safe
-    crashes). p is always on-track, so the result is at least p."""
     last = (x0, y0)
     for (x, y) in _supercover(x0, y0, x1, y1)[1:]:
         if 0 <= x < LW and 0 <= y < LH and grid[y][x]:
@@ -204,16 +166,277 @@ def _last_on_track(grid, x0, y0, x1, y1):
     return last
 
 
-# ---- validation ----
+# ---- centreline generation ----
 
-def _validate(params, grid):
-    on = [(x, y) for y in range(LH) for x in range(LW) if grid[y][x]]
-    if len(on) < 2 * (LW + LH):  # sanity floor; a real ring is much larger
+def _chaikin(pts, iters):
+    for _ in range(iters):
+        out = []
+        m = len(pts)
+        for i in range(m):
+            p, q = pts[i], pts[(i + 1) % m]
+            out.append((0.75 * p[0] + 0.25 * q[0], 0.75 * p[1] + 0.25 * q[1]))
+            out.append((0.25 * p[0] + 0.75 * q[0], 0.25 * p[1] + 0.75 * q[1]))
+        pts = out
+    return pts
+
+
+def _shape_points(rng, shape):
+    T = 180
+    if shape == "ellipse":
+        base = [(math.cos(2 * math.pi * i / T), math.sin(2 * math.pi * i / T))
+                for i in range(T)]
+    elif shape in ("triangle", "square", "pentagon", "hexagon"):
+        k = {"triangle": 3, "square": 4, "pentagon": 5, "hexagon": 6}[shape]
+        rot = rng.uniform(0, 2 * math.pi)
+        verts = [(math.cos(2 * math.pi * i / k + rot),
+                  math.sin(2 * math.pi * i / k + rot)) for i in range(k)]
+        base = _chaikin(verts, 2)
+    elif shape == "zigzag":
+        k = rng.choice([4, 5, 6])
+        verts = []
+        for i in range(2 * k):
+            r = 1.0 if i % 2 == 0 else 0.58
+            a = 2 * math.pi * i / (2 * k)
+            verts.append((r * math.cos(a), r * math.sin(a)))
+        base = _chaikin(verts, 1)
+    elif shape == "wavy":
+        k = rng.choice([6, 7, 8])
+        base = []
+        for i in range(T):
+            a = 2 * math.pi * i / T
+            r = 1.0 + 0.14 * math.sin(k * a)
+            base.append((r * math.cos(a), r * math.sin(a)))
+    elif shape == "figure8":
+        # Gerono lemniscate: crosses itself at the origin.
+        base = [(math.cos(2 * math.pi * i / T),
+                 math.sin(2 * math.pi * i / T) * math.cos(2 * math.pi * i / T))
+                for i in range(T)]
+    elif shape == "kidney":
+        base = []
+        for i in range(T):
+            a = 2 * math.pi * i / T
+            r = 0.68 + 0.5 * math.cos(a)
+            base.append((r * math.cos(a), r * math.sin(a)))
+    else:
+        base = [(math.cos(2 * math.pi * i / T), math.sin(2 * math.pi * i / T))
+                for i in range(T)]
+
+    rot = rng.uniform(0, 2 * math.pi)
+    ca, sa = math.cos(rot), math.sin(rot)
+    return [(x * ca - y * sa, x * sa + y * ca) for (x, y) in base]
+
+
+def _fit_to_lattice(pts):
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+    spanx = (maxx - minx) or 1.0
+    spany = (maxy - miny) or 1.0
+    sx = (LW - 2 * MARGIN) / spanx
+    sy = (LH - 2 * MARGIN) / spany
+    # Cap anisotropy so a square doesn't squash into the same wide rectangle as
+    # an oval; naturally-wide shapes (oval, figure-8) still fill the panel.
+    MAXR = 1.5
+    if sx > sy * MAXR:
+        sx = sy * MAXR
+    if sy > sx * MAXR:
+        sy = sx * MAXR
+    offx = (LW - spanx * sx) / 2.0
+    offy = (LH - spany * sy) / 2.0
+    return [(offx + (x - minx) * sx, offy + (y - miny) * sy) for (x, y) in pts]
+
+
+def _resample_closed(pts, n):
+    """Resample a closed polyline to n points spaced equally by arc length."""
+    m = len(pts)
+    seglen = [_dist(pts[i], pts[(i + 1) % m]) for i in range(m)]
+    total = sum(seglen)
+    if total <= 0:
+        return list(pts[:n])
+    step = total / n
+    out = []
+    i = 0
+    acc = 0.0
+    for k in range(n):
+        target = k * step
+        while acc + seglen[i] < target and i < m - 1:
+            acc += seglen[i]
+            i += 1
+        a, b = pts[i], pts[(i + 1) % m]
+        rem = target - acc
+        f = rem / seglen[i] if seglen[i] > 0 else 0.0
+        out.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+    return out
+
+
+def _centreline(seed, shape):
+    rng = random.Random(seed)
+    pts = _fit_to_lattice(_shape_points(rng, shape))
+    return _resample_closed(pts, 240)
+
+
+def _build_grid(center):
+    """Tube of radius HALF_W around the centreline polyline. The centreline is
+    dense (~0.3 cells/step), so every-other point is sub-pixel identical and
+    halves the per-cell distance scan."""
+    pts = center[::2] or center
+    m = len(pts)
+    segs = [(pts[i][0], pts[i][1], pts[(i + 1) % m][0], pts[(i + 1) % m][1])
+            for i in range(m)]
+    r2 = HALF_W * HALF_W
+    grid = [[False] * LW for _ in range(LH)]
+    for y in range(LH):
+        for x in range(LW):
+            best = 1e18
+            for (ax, ay, bx, by) in segs:
+                d2 = _pt_seg_dist2(x, y, ax, ay, bx, by)
+                if d2 < best:
+                    best = d2
+                    if best <= r2:
+                        break
+            grid[y][x] = best <= r2
+    return grid
+
+
+def _curvatures(center):
+    """Per-point turning magnitude; low = a straight/gentle stretch."""
+    n = len(center)
+    out = []
+    for i in range(n):
+        a = center[(i - 1) % n]
+        b = center[i]
+        c = center[(i + 1) % n]
+        a1 = math.atan2(b[1] - a[1], b[0] - a[0])
+        a2 = math.atan2(c[1] - b[1], c[0] - b[0])
+        out.append(abs(math.atan2(math.sin(a2 - a1), math.cos(a2 - a1))))
+    return out
+
+
+def _checkpoints(center, k):
+    """k gates equally spaced by arc length, ordered along the centreline.
+    Gate 0 is the start, chosen at the gentlest (lowest-curvature) stretch so
+    the car has room to accelerate off the line. Each gate is a full-width
+    slice perpendicular to the path; its forward normal is the path tangent."""
+    curv = _curvatures(center)
+    # Smooth curvature over a small window, then pick the calmest index — but
+    # exclude points near a crossing/pinch (a non-adjacent bit of centreline
+    # within ~TRACK_W), so a figure-8 doesn't start the car inside its X.
+    n = len(center)
+    win = max(1, n // 24)
+    far = max(2, n // 6)          # "non-adjacent" in arc-index terms
+    near2 = (TRACK_W * 1.6) ** 2
+    smooth = []
+    for i in range(n):
+        s = sum(curv[(i + j) % n] for j in range(-win, win + 1))
+        crossing = False
+        for j in range(far, n - far):
+            o = center[(i + j) % n]
+            if (center[i][0] - o[0]) ** 2 + (center[i][1] - o[1]) ** 2 < near2:
+                crossing = True
+                break
+        smooth.append(s + (100.0 if crossing else 0.0))
+    start_i = min(range(n), key=lambda i: smooth[i])
+
+    gates = []
+    centres = []
+    for j in range(k):
+        idx = (start_i + round(j * n / k)) % n
+        cx, cy = center[idx]
+        a = center[(idx - 1) % n]
+        b = center[(idx + 1) % n]
+        tx, ty = b[0] - a[0], b[1] - a[1]
+        tl = math.hypot(tx, ty) or 1.0
+        tx, ty = tx / tl, ty / tl
+        px, py = -ty, tx          # perpendicular across the band
+        hl = HALF_W * 1.4         # extend a touch past the tube edges
+        gates.append((cx - px * hl, cy - py * hl,
+                      cx + px * hl, cy + py * hl, tx, ty))
+        centres.append((cx, cy, tx, ty))
+    return gates, centres
+
+
+def _cross_gate(p, target, gate):
+    """Forward crossing of a gate slice by the move segment."""
+    ax, ay, bx, by, nx, ny = gate
+    if not _segments_cross(p[0], p[1], target[0], target[1], ax, ay, bx, by):
         return False
+    return (target[0] - p[0]) * nx + (target[1] - p[1]) * ny > 0
 
-    # Single 8-connected component.
-    seen = {on[0]}
-    q = deque([on[0]])
+
+def _advance_progress(p, target, cp_count, gates):
+    """Number of forward gate crossings on this move, advancing the ordered
+    counter. Loops so a fast move that clears more than one gate is credited
+    fully (and never gets stuck behind a skipped gate)."""
+    k = len(gates)
+    for _ in range(k):
+        ng = (cp_count + 1) % k
+        if _cross_gate(p, target, gates[ng]):
+            cp_count += 1
+        else:
+            break
+    return cp_count
+
+
+def _snap_on_track(grid, fx, fy):
+    """Nearest on-track lattice point to a float location."""
+    best = None
+    best_d = 1e18
+    for ddx in range(-3, 4):
+        for ddy in range(-3, 4):
+            x = int(round(fx)) + ddx
+            y = int(round(fy)) + ddy
+            if 0 <= x < LW and 0 <= y < LH and grid[y][x]:
+                d = (x - fx) ** 2 + (y - fy) ** 2
+                if d < best_d:
+                    best_d = d
+                    best = (x, y)
+    return best
+
+
+def _has_enclosed_hole(grid):
+    """True if some off-track cell is unreachable from the border (i.e. the
+    band encloses interior space → it's a real loop, not a blob)."""
+    reached = [[False] * LW for _ in range(LH)]
+    q = deque()
+    for x in range(LW):
+        for y in (0, LH - 1):
+            if not grid[y][x] and not reached[y][x]:
+                reached[y][x] = True
+                q.append((x, y))
+    for y in range(LH):
+        for x in (0, LW - 1):
+            if not grid[y][x] and not reached[y][x]:
+                reached[y][x] = True
+                q.append((x, y))
+    while q:
+        x, y = q.popleft()
+        for ddx, ddy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + ddx, y + ddy
+            if (0 <= nx < LW and 0 <= ny < LH and not grid[ny][nx]
+                    and not reached[ny][nx]):
+                reached[ny][nx] = True
+                q.append((nx, ny))
+    for y in range(LH):
+        for x in range(LW):
+            if not grid[y][x] and not reached[y][x]:
+                return True
+    return False
+
+
+def _single_component(grid):
+    start = None
+    total = 0
+    for y in range(LH):
+        for x in range(LW):
+            if grid[y][x]:
+                total += 1
+                if start is None:
+                    start = (x, y)
+    if start is None:
+        return False, 0
+    seen = {start}
+    q = deque([start])
     while q:
         x, y = q.popleft()
         for ddx in (-1, 0, 1):
@@ -225,157 +448,69 @@ def _validate(params, grid):
                         and (nx, ny) not in seen):
                     seen.add((nx, ny))
                     q.append((nx, ny))
-    if len(seen) != len(on):
-        return False
-
-    # It's a loop: the centre is off-track and enclosed (off-track flood from
-    # the border does not reach it).
-    cxi, cyi = int(round(CX)), int(round(CY))
-    if grid[cyi][cxi]:
-        return False
-    reached = set()
-    q = deque()
-    for x in range(LW):
-        for y in (0, LH - 1):
-            if not grid[y][x] and (x, y) not in reached:
-                reached.add((x, y))
-                q.append((x, y))
-    for y in range(LH):
-        for x in (0, LW - 1):
-            if not grid[y][x] and (x, y) not in reached:
-                reached.add((x, y))
-                q.append((x, y))
-    while q:
-        x, y = q.popleft()
-        for ddx, ddy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            nx, ny = x + ddx, y + ddy
-            if (0 <= nx < LW and 0 <= ny < LH and not grid[ny][nx]
-                    and (nx, ny) not in reached):
-                reached.add((nx, ny))
-                q.append((nx, ny))
-    if (cxi, cyi) in reached:
-        return False
-
-    # Band width is TRACK_W by construction (inner = outer - TRACK_W radially);
-    # the connectivity + enclosed-hole checks above already reject any noise
-    # spike that would pinch the band below TRACK_W_MIN. Require >= 2 straights
-    # so the speed dimension stays usable.
-    runs = _straight_runs(params)
-    return sum(1 for length, _theta in runs if length >= MIN_STRAIGHT) >= 2
+    return len(seen) == total, total
 
 
-_STRAIGHT_THRESH = math.radians(18.0)
+def _generate_track(seed, shape):
+    """Returns (center, grid, start_xy, start_tan, gates, centres, k) or None."""
+    center = _centreline(seed, shape)
+    grid = _build_grid(center)
 
-
-def _straight_runs(params):
-    """Segment the centreline into runs where the tangent direction stays
-    within _STRAIGHT_THRESH of the run's *anchor* direction. A near-straight
-    arc keeps one anchor and grows; a curve drifts and breaks into short runs.
-    Returns [(arc_length, mid_theta), ...]. Scanning starts at the sharpest
-    turn (deep in a curve) so a straight is never split across the seam."""
-    N = 240
-    pts = []
-    for i in range(N):
-        theta = 2.0 * math.pi * i / N
-        rmid = (_r_out(params, theta) + _r_in(params, theta)) / 2.0
-        pts.append((CX + rmid * math.cos(theta), CY + rmid * math.sin(theta)))
-
-    dirs, lens = [], []
-    for i in range(N):
-        ax, ay = pts[i]
-        bx, by = pts[(i + 1) % N]
-        dirs.append(math.atan2(by - ay, bx - ax))
-        lens.append(math.hypot(bx - ax, by - ay))
-
-    def angdiff(a, b):
-        return math.atan2(math.sin(a - b), math.cos(a - b))
-
-    start = max(range(N), key=lambda i: abs(angdiff(dirs[i], dirs[i - 1])))
-    order = [(start + k) % N for k in range(N)]
-
-    runs = []
-    anchor = None
-    run_len = 0.0
-    run_ps = 0
-    for pos, i in enumerate(order):
-        if anchor is None:
-            anchor, run_len, run_ps = dirs[i], lens[i], pos
-        elif abs(angdiff(dirs[i], anchor)) <= _STRAIGHT_THRESH:
-            run_len += lens[i]
-        else:
-            runs.append((run_len, run_ps, pos - 1))
-            anchor, run_len, run_ps = dirs[i], lens[i], pos
-    runs.append((run_len, run_ps, len(order) - 1))
-
-    result = []
-    for length, ps, pe in runs:
-        mid_i = order[(ps + pe) // 2]
-        result.append((length, 2.0 * math.pi * mid_i / N))
-    return result
-
-
-def _place_start(params, grid):
-    """Start sits on the longest straight, on-track. Forward is the
-    increasing-theta (CCW) direction, so winding is +1 per forward sector.
-    Returns (sx, sy, theta_s)."""
-    runs = _straight_runs(params)
-    _length, theta_s = max(runs, key=lambda r: r[0])
-    rmid = (_r_out(params, theta_s) + _r_in(params, theta_s)) / 2.0
-    mx = CX + rmid * math.cos(theta_s)
-    my = CY + rmid * math.sin(theta_s)
-
-    # Snap the centreline midpoint to the nearest on-track lattice point.
-    best = None
-    best_d = 1e9
-    for ddx in range(-2, 3):
-        for ddy in range(-2, 3):
-            x = int(round(mx)) + ddx
-            y = int(round(my)) + ddy
-            if 0 <= x < LW and 0 <= y < LH and grid[y][x]:
-                d = (x - mx) ** 2 + (y - my) ** 2
-                if d < best_d:
-                    best_d = d
-                    best = (x, y)
-    if best is None:
-        best = (int(round(mx)), int(round(my)))
-    return best[0], best[1], theta_s
-
-
-def _generate_track(seed):
-    """Returns (params, grid, start_xy, theta_s) or None if invalid."""
-    params = _ring_params(seed)
-    grid = _build_grid(params)
-    if not _validate(params, grid):
+    ok, total = _single_component(grid)
+    if not ok or total < 2 * (LW + LH):
         return None
-    sx, sy, theta_s = _place_start(params, grid)
-    if not grid[sy][sx]:
+    if not _has_enclosed_hole(grid):
         return None
-    return params, grid, (sx, sy), theta_s
+
+    length = sum(_dist(center[i], center[(i + 1) % len(center)])
+                 for i in range(len(center)))
+    k = int(_clamp(round(length / 7.0), 6, 12))
+    gates, centres = _checkpoints(center, k)
+
+    start_xy = _snap_on_track(grid, centres[0][0], centres[0][1])
+    if start_xy is None:
+        return None
+    # Every gate centre must sit on the band.
+    for (cx, cy, _tx, _ty) in centres:
+        if _snap_on_track(grid, cx, cy) is None:
+            return None
+    # Not boxed in: at least one accel from rest stays on-track.
+    sx, sy = start_xy
+    drivable = any(_seg_on_track(grid, sx, sy, sx + ax, sy + ay)
+                   for ax in (-1, 0, 1) for ay in (-1, 0, 1)
+                   if (ax, ay) != (0, 0))
+    if not drivable:
+        return None
+
+    start_tan = (centres[0][2], centres[0][3])
+    return center, grid, start_xy, start_tan, gates, centres, k
 
 
 def _generate_with_retry(base_seed):
     """Advance the seed deterministically until a valid track is found, so
-    daily players on the same day converge on the same track. Falls back to a
-    plain (un-perturbed) oval, which is always valid."""
+    daily players on the same day converge on the same track. The shape is
+    derived from the seed too. Falls back to a plain oval, always valid."""
     seed = base_seed
     for _ in range(RESEED_CAP):
-        result = _generate_track(seed)
+        shape = SHAPES[seed % len(SHAPES)]
+        result = _generate_track(seed, shape)
         if result is not None:
-            return seed, result
+            return seed, shape, result
         seed = (seed + 1) & 0x7fffffff
-    params = {"a": OUTER_A, "b": OUTER_B, "harmonics": []}
-    grid = _build_grid(params)
-    sx, sy, theta_s = _place_start(params, grid)
-    return base_seed, (params, grid, (sx, sy), theta_s)
+    result = _generate_track(base_seed, "ellipse")
+    if result is None:  # pragma: no cover — ellipse always validates
+        result = _generate_track(base_seed + 1, "ellipse")
+    return base_seed, "ellipse", result
 
 
-def _compute_optimum(grid, start_xy, target_laps, should_stop):
-    """BFS over (px, py, vx, vy, prog) for the fewest clean turns to complete
-    target_laps. prog = forward sectors swept since the start, capped at the
-    goal. Uniform turn cost, so the first time prog hits the goal is optimal.
+def _compute_optimum(grid, start_xy, start_tan, gates, k, target_laps,
+                     should_stop):
+    """BFS over (px, py, vx, vy, cp_count) for the fewest clean turns to
+    complete target_laps. cp_count = ordered forward gate crossings, capped at
+    the goal. Uniform turn cost → first time the goal is hit is optimal.
     Returns the optimum, or None if unreachable / aborted / state cap hit."""
     sx, sy = start_xy
-    goal = S_SECTORS * target_laps
+    goal = k * target_laps
     start = (sx, sy, 0, 0, 0)
     dist = {start: 0}
     q = deque([start])
@@ -392,8 +527,9 @@ def _compute_optimum(grid, start_xy, target_laps, should_stop):
                 tx, ty = px + nvx, py + nvy
                 if not _seg_on_track(grid, px, py, tx, ty):
                     continue
-                dprog = _wrap_sector(_sector(tx, ty) - _sector(px, py))
-                nprog = _clamp(prog + dprog, 0, goal)
+                nprog = _advance_progress((px, py), (tx, ty), prog, gates)
+                if nprog > goal:
+                    nprog = goal
                 if nprog >= goal:
                     return d + 1
                 ns = (tx, ty, nvx, nvy, nprog)
@@ -408,7 +544,7 @@ def _compute_optimum(grid, start_xy, target_laps, should_stop):
 class VectorRacing:
     name = "vector-racing"
     icon = "VR"
-    version = "1.0.0"
+    version = "1.1.0"
 
     interval_seconds = None
 
@@ -428,24 +564,26 @@ class VectorRacing:
             self._laps = DEFAULT_LAPS
         self._laps = _clamp(self._laps, 1, 3)
 
-        # Mid-race state is RAM-only — start every launch at the setup screen.
         self._status = "setup"
         self._reset_race_vars()
 
-        # Background optimum computation.
         self._opt_token = 0
         self._opt_thread = None
 
     def _reset_race_vars(self):
-        self._params = None
+        self._center = None
         self._grid = None
+        self._gates = None
+        self._centres = None
+        self._k = 0
         self._seed = None
+        self._shape = None
         self._start = (0, 0)
-        self._theta_s = 0.0
+        self._start_tan = (1.0, 0.0)
         self._px = self._py = 0
         self._vx = self._vy = 0
         self._attempt_v = (0, 0)
-        self._prog = 0
+        self._cp_count = 0
         self._laps_done = 0
         self._moves = 0
         self._crashes = 0
@@ -480,14 +618,19 @@ class VectorRacing:
         else:
             base_seed = int(time.time() * 1000) & 0x7fffffff
 
-        seed, (params, grid, start_xy, theta_s) = _generate_with_retry(base_seed)
+        seed, shape, track = _generate_with_retry(base_seed)
+        center, grid, start_xy, start_tan, gates, centres, k = track
 
         self._reset_race_vars()
-        self._params = params
+        self._center = center
         self._grid = grid
+        self._gates = gates
+        self._centres = centres
+        self._k = k
         self._seed = seed
+        self._shape = shape
         self._start = start_xy
-        self._theta_s = theta_s
+        self._start_tan = start_tan
         self._px, self._py = start_xy
         self._trail = [start_xy]
         self._best_key = self._best_key_for(mode, laps)
@@ -495,16 +638,12 @@ class VectorRacing:
         self._persist()
 
         # Optimum is expensive on Pi-class hardware — compute off the request
-        # thread so the race starts instantly. A token guards against a stale
-        # thread writing into a newer race.
+        # thread so the race starts instantly. A token guards a stale thread.
         self._opt_token += 1
         token = self._opt_token
-        grid_ref = grid
-        start_ref = start_xy
-        laps_ref = laps
 
         def worker():
-            opt = _compute_optimum(grid_ref, start_ref, laps_ref,
+            opt = _compute_optimum(grid, start_xy, start_tan, gates, k, laps,
                                    lambda: self._opt_token != token)
             with self._lock:
                 if self._opt_token == token:
@@ -514,7 +653,7 @@ class VectorRacing:
         t.start()
 
     def _abandon(self):
-        self._opt_token += 1  # orphan any running optimum thread
+        self._opt_token += 1
         self._reset_race_vars()
         self._status = "setup"
 
@@ -530,6 +669,12 @@ class VectorRacing:
             self._last_result = "Finished in %d" % self._moves
         self._persist()
 
+    def _apply_progress(self, frm, to):
+        self._cp_count = _advance_progress(frm, to, self._cp_count, self._gates)
+        ld = self._cp_count // self._k
+        if ld > self._laps_done:
+            self._laps_done = ld
+
     def _accel(self, dx, dy):
         if self._status != "racing" or self._grid is None:
             return
@@ -540,16 +685,12 @@ class VectorRacing:
         self._moves += 1
 
         if _seg_on_track(self._grid, self._px, self._py, tx, ty):
-            dprog = _wrap_sector(_sector(tx, ty) - _sector(self._px, self._py))
-            self._prog += dprog
+            self._apply_progress((self._px, self._py), (tx, ty))
             self._px, self._py = tx, ty
             self._vx, self._vy = nvx, nvy
             self._trail.append((tx, ty))
             if len(self._trail) > TRAIL_CAP:
                 self._trail = self._trail[-TRAIL_CAP:]
-            ld = int(math.floor(self._prog / float(S_SECTORS)))
-            if ld > self._laps_done:
-                self._laps_done = ld
             self._last_result = ""
             if self._laps_done >= self._laps:
                 self._finish()
@@ -564,15 +705,14 @@ class VectorRacing:
             # Back to the line; completed laps kept, in-progress lap redone.
             self._px, self._py = self._start
             self._vx = self._vy = 0
-            self._prog = self._laps_done * S_SECTORS
+            self._cp_count = self._laps_done * self._k
             self._trail.append(self._start)
         else:
             # Safe: stop at the last on-track point along the attempted move.
             avx, avy = self._attempt_v
             lx, ly = _last_on_track(self._grid, self._px, self._py,
                                     self._px + avx, self._py + avy)
-            dprog = _wrap_sector(_sector(lx, ly) - _sector(self._px, self._py))
-            self._prog += dprog
+            self._apply_progress((self._px, self._py), (lx, ly))
             self._px, self._py = lx, ly
             self._vx = self._vy = 0
             self._trail.append((lx, ly))
@@ -608,7 +748,6 @@ class VectorRacing:
                     return False
                 if dx not in (-1, 0, 1) or dy not in (-1, 0, 1):
                     return False
-                # Stash the attempted clamped velocity for Safe-crash landing.
                 self._attempt_v = (_clamp(self._vx + dx, -VMAX, VMAX),
                                    _clamp(self._vy + dy, -VMAX, VMAX))
                 self._accel(dx, dy)
@@ -642,6 +781,7 @@ class VectorRacing:
                 "best": best if best is not None else "—",
                 "speed": "%d,%d" % (self._vx, self._vy),
                 "crashes": self._crashes,
+                "shape": self._shape or "—",
                 "last_result": self._last_result,
             }
 
@@ -658,6 +798,7 @@ class VectorRacing:
             snap = {
                 "status": self._status,
                 "mode": self._mode,
+                "shape": self._shape,
                 "laps": self._laps,
                 "lap_done": self._laps_done,
                 "moves": self._moves,
@@ -665,11 +806,12 @@ class VectorRacing:
                 "crashes": self._crashes,
                 "last_result": self._last_result,
                 "crashed": self._crashed_flag,
-                "params": self._params,
                 "grid": self._grid,
+                "gates": self._gates,
                 "px": self._px, "py": self._py,
                 "vx": self._vx, "vy": self._vy,
-                "theta_s": self._theta_s,
+                "start_tan": self._start_tan,
+                "next_gate": ((self._cp_count + 1) % self._k) if self._k else 0,
                 "trail": list(self._trail),
                 "best_key": self._best_key,
             }
@@ -679,32 +821,32 @@ class VectorRacing:
             self._paint(draw, w, h, snap)
         except Exception:
             logging.exception("vector-racing: render failed")
-            f = self._font(10)
+            try:
+                f = self._font(11)
+            except Exception:
+                f = ImageFont.load_default()
             draw.text((4, 4), "VECTOR RACING — render error", font=f, fill=0)
 
     def _paint(self, draw, w, h, s):
-        title_f = self._font(10)
-        small_f = self._font(8)
-        big_f = self._font(14)
+        title_f = self._font(11)
+        small_f = self._font(9)
+        big_f = self._font(15)
 
-        # ---- header strip ----
         mode = s["mode"]
         lap = "%d/%d" % (min(s["lap_done"] + 1, s["laps"]), s["laps"])
         header = "VEC · %s · lap %s · moves %d" % (mode, lap, s["moves"])
         draw.text((2, 1), header, font=small_f, fill=0)
-        draw.line((2, 12, w - 2, 12), fill=0)
+        draw.line((2, 13, w - 2, 13), fill=0)
 
-        body_top = 14
+        body_top = 15
         body_bot = h - 2
 
         if s["status"] == "setup" or s["grid"] is None:
             self._paint_setup(draw, w, body_top, body_bot, big_f, small_f)
             return
-
         if s["status"] == "finished":
             self._paint_victory(draw, w, body_top, body_bot, s, big_f, small_f)
             return
-
         self._paint_track(draw, w, body_top, body_bot, s, small_f)
 
     def _paint_setup(self, draw, w, top, bot, big_f, small_f):
@@ -714,13 +856,13 @@ class VectorRacing:
         draw.text(((w - mw) // 2, cy - 14), msg, font=big_f, fill=0)
         hint = "set up a race on the phone"
         hw = int(draw.textlength(hint, font=small_f))
-        draw.text(((w - hw) // 2, cy + 6), hint, font=small_f, fill=0)
+        draw.text(((w - hw) // 2, cy + 8), hint, font=small_f, fill=0)
 
     def _paint_victory(self, draw, w, top, bot, s, big_f, small_f):
         cy = (top + bot) // 2
         msg = "FINISHED"
         mw = int(draw.textlength(msg, font=big_f))
-        draw.text(((w - mw) // 2, cy - 22), msg, font=big_f, fill=0)
+        draw.text(((w - mw) // 2, cy - 24), msg, font=big_f, fill=0)
 
         opt = s["optimum"]
         opt_str = str(opt) if opt is not None else "—"
@@ -731,21 +873,20 @@ class VectorRacing:
         best = s["best"]
         bline = "best %s" % (str(best) if best is not None else "—")
         bw = int(draw.textlength(bline, font=small_f))
-        draw.text(((w - bw) // 2, cy + 10), bline, font=small_f, fill=0)
+        draw.text(((w - bw) // 2, cy + 11), bline, font=small_f, fill=0)
 
         cline = "crashes %d" % s["crashes"]
         cw = int(draw.textlength(cline, font=small_f))
-        draw.text(((w - cw) // 2, cy + 22), cline, font=small_f, fill=0)
+        draw.text(((w - cw) // 2, cy + 23), cline, font=small_f, fill=0)
 
     def _paint_track(self, draw, w, top, bot, s, small_f):
-        params = s["params"]
-        pad = 2
+        grid = s["grid"]
+        pad = 3
         avail_w = w - 2 * pad
         avail_h = (bot - top) - 2 * pad
         cell = min(avail_w / float(LW), avail_h / float(LH))
         if cell < 1.0:
             cell = 1.0
-        # Centre the lattice in the body.
         ox = pad + (avail_w - cell * LW) / 2.0
         oy = top + pad + (avail_h - cell * LH) / 2.0
 
@@ -754,28 +895,31 @@ class VectorRacing:
         def sy(y):
             return oy + y * cell
 
-        # ---- track boundaries (analytic polygons; cheaper + smooth) ----
-        N = 120
-        outer = []
-        inner = []
-        for i in range(N + 1):
-            theta = 2.0 * math.pi * i / N
-            ro = _r_out(params, theta)
-            ri = _r_in(params, theta)
-            outer.append((sx(CX + ro * math.cos(theta)),
-                          sy(CY + ro * math.sin(theta))))
-            inner.append((sx(CX + ri * math.cos(theta)),
-                          sy(CY + ri * math.sin(theta))))
-        draw.line(outer, fill=0)
-        draw.line(inner, fill=0)
+        # ---- band outline: edges between on-track and off-track cells ----
+        for y in range(LH):
+            for x in range(LW):
+                on = grid[y][x]
+                on_r = grid[y][x + 1] if x + 1 < LW else False
+                if on != on_r:
+                    X = sx(x + 0.5)
+                    draw.line((X, sy(y - 0.5), X, sy(y + 0.5)), fill=0)
+                on_d = grid[y + 1][x] if y + 1 < LH else False
+                if on != on_d:
+                    Y = sy(y + 0.5)
+                    draw.line((sx(x - 0.5), Y, sx(x + 0.5), Y), fill=0)
 
-        # ---- start/finish: dashed radial segment across the band ----
-        th = s["theta_s"]
-        ro = _r_out(params, th)
-        ri = _r_in(params, th)
-        ax, ay = sx(CX + ri * math.cos(th)), sy(CY + ri * math.sin(th))
-        bx, by = sx(CX + ro * math.cos(th)), sy(CY + ro * math.sin(th))
-        self._dash_line(draw, ax, ay, bx, by, dash=2, gap=2)
+        # ---- start/finish gate: dashed slice across the band ----
+        g0 = s["gates"][0]
+        self._dash_line(draw, sx(g0[0]), sy(g0[1]), sx(g0[2]), sy(g0[3]),
+                        dash=2, gap=2)
+
+        # ---- next checkpoint: hollow guide marker (helps on figure-8) ----
+        gn = s["gates"][s["next_gate"]]
+        gcx = (gn[0] + gn[2]) / 2.0
+        gcy = (gn[1] + gn[3]) / 2.0
+        gr = max(1.5, cell * 0.35)
+        draw.ellipse((sx(gcx) - gr, sy(gcy) - gr, sx(gcx) + gr, sy(gcy) + gr),
+                     outline=0)
 
         # ---- trail: dotted line through past positions ----
         trail = s["trail"]
@@ -793,21 +937,48 @@ class VectorRacing:
         draw.ellipse((sx(tx) - mr, sy(ty) - mr, sx(tx) + mr, sy(ty) + mr),
                      outline=0)
 
-        # ---- car: filled dot at p ----
-        cr = max(1.5, cell * 0.4)
-        draw.ellipse((sx(px) - cr, sy(py) - cr, sx(px) + cr, sy(py) + cr),
-                     fill=0)
+        # ---- car: little rectangle with wheels, pointing along velocity ----
+        if vx != 0 or vy != 0:
+            ang = math.atan2(vy, vx)
+        else:
+            ang = math.atan2(s["start_tan"][1], s["start_tan"][0])
+        self._draw_car(draw, sx(px), sy(py), ang, cell)
 
         # ---- status footer ----
         opt = s["optimum"]
         opt_str = str(opt) if opt is not None else "—"
         best = s["best"]
         best_str = str(best) if best is not None else "—"
-        foot = "spd %d,%d  opt %s  best %s  cr %d" % (
-            vx, vy, opt_str, best_str, s["crashes"])
+        foot = "%s  spd %d,%d  opt %s  best %s  cr %d" % (
+            s["shape"], vx, vy, opt_str, best_str, s["crashes"])
         if s["crashed"]:
-            foot = "CRASH   " + foot
-        draw.text((2, bot - 8), foot, font=small_f, fill=0)
+            foot = "CRASH  " + foot
+        draw.text((2, bot - 9), foot, font=small_f, fill=0)
+
+    def _draw_car(self, draw, cx, cy, ang, cell):
+        ca, sa = math.cos(ang), math.sin(ang)
+
+        def tf(lx, ly):
+            return (cx + lx * ca - ly * sa, cy + lx * sa + ly * ca)
+
+        if cell < 4:
+            r = max(1.0, cell * 0.4)
+            draw.rectangle((cx - r, cy - r, cx + r, cy + r), fill=0)
+            return
+
+        bl = cell * 0.7    # half body length (along travel)
+        bw = cell * 0.42   # half body width
+        # Wheels first (black), so the white body sits over their inner edge.
+        wl = cell * 0.28
+        ww = cell * 0.16
+        for sxl, syl in ((bl * 0.6, bw), (bl * 0.6, -bw),
+                         (-bl * 0.6, bw), (-bl * 0.6, -bw)):
+            wpts = [tf(sxl - wl, syl - ww), tf(sxl + wl, syl - ww),
+                    tf(sxl + wl, syl + ww), tf(sxl - wl, syl + ww)]
+            draw.polygon(wpts, fill=0)
+        body = [tf(bl, 0), tf(bl * 0.5, -bw), tf(-bl, -bw),
+                tf(-bl, bw), tf(bl * 0.5, bw)]
+        draw.polygon(body, outline=0, fill=1)
 
     def _dash_line(self, draw, x0, y0, x1, y1, dash=2, gap=2):
         length = math.hypot(x1 - x0, y1 - y0)
