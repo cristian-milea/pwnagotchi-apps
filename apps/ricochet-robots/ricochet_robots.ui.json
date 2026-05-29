@@ -1,0 +1,73 @@
+{
+  "type": "column",
+  "padding": 16,
+  "spacing": 10,
+  "children": [
+    { "type": "text", "value": "Ricochet Robots", "style": "headline" },
+    { "type": "text", "style": "caption",
+      "value": "Pick a robot, then push a direction — it slides until it hits a wall, the edge, the center block, or another robot. Land the matching shape on its target in the fewest moves." },
+
+    { "type": "select", "local": "robot", "label": "Robot", "default": "0",
+      "options": [
+        { "value": "0", "label": "● Circle" },
+        { "value": "1", "label": "■ Square" },
+        { "value": "2", "label": "▲ Triangle" },
+        { "value": "3", "label": "◆ Diamond" }
+      ],
+      "action": { "type": "push", "payload": { "action": "select", "robot": "{{local.robot}}" } } },
+
+    { "type": "row", "spacing": 8, "align": "center", "children": [
+      { "type": "button", "label": "←", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "move", "dir": "left" } } },
+      { "type": "column", "spacing": 8, "children": [
+        { "type": "button", "label": "↑", "style": "primary",
+          "action": { "type": "push", "payload": { "action": "move", "dir": "up" } } },
+        { "type": "button", "label": "↓", "style": "secondary",
+          "action": { "type": "push", "payload": { "action": "move", "dir": "down" } } }
+      ] },
+      { "type": "button", "label": "→", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "move", "dir": "right" } } }
+    ] },
+
+    { "type": "row", "spacing": 12, "children": [
+      { "type": "button", "label": "Undo", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "undo" } } },
+      { "type": "button", "label": "Restart", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "restart" } } }
+    ] },
+
+    { "type": "divider" },
+
+    { "type": "select", "local": "difficulty", "label": "Difficulty", "default": "medium",
+      "options": [
+        { "value": "easy", "label": "Easy" },
+        { "value": "medium", "label": "Medium" },
+        { "value": "hard", "label": "Hard" }
+      ] },
+    { "type": "select", "local": "size", "label": "Board size", "default": "8",
+      "options": [
+        { "value": "8", "label": "8×8" },
+        { "value": "12", "label": "12×12" },
+        { "value": "16", "label": "16×16" }
+      ] },
+
+    { "type": "button", "label": "New random board", "style": "secondary",
+      "action": { "type": "push", "payload": {
+        "action": "new_random", "size": "{{local.size}}", "difficulty": "{{local.difficulty}}" } } },
+    { "type": "button", "label": "Today's daily", "style": "secondary",
+      "action": { "type": "push", "payload": {
+        "action": "new_daily", "size": "{{local.size}}", "difficulty": "{{local.difficulty}}" } } },
+
+    { "type": "divider" },
+
+    { "type": "state_text", "binding": "status", "format": "{}", "style": "body" },
+    { "type": "state_text", "binding": "mode", "format": "Mode: {}", "style": "caption" },
+    { "type": "state_text", "binding": "target_shape", "format": "Target: {}", "style": "caption" },
+    { "type": "state_text", "binding": "selected", "format": "Moving: {}", "style": "caption" },
+    { "type": "row", "spacing": 12, "children": [
+      { "type": "state_text", "binding": "moves", "format": "Moves {}", "style": "caption" },
+      { "type": "state_text", "binding": "optimal", "format": "· opt {}", "style": "caption" },
+      { "type": "state_text", "binding": "best", "format": "· best {}", "style": "caption" }
+    ] }
+  ]
+}
