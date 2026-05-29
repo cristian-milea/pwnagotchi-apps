@@ -69,17 +69,18 @@
     {
       "name": "tide-sun",
       "icon": "TS",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "author": "cristian-milea",
-      "description": "Sunrise/sunset and moon phase.",
-      "long_description": "Shows today's sunrise and sunset times plus the current moon phase. Pulls daily sun data from Open-Meteo; moon phase is computed device-side using a Conway approximation. Phone-side UI is just a Sync control — the e-ink is the display.",
+      "description": "Sunrise/sunset, moon, and a scrubbable tide graph.",
+      "long_description": "Top strip shows today's sunrise, sunset, and the current moon phase on one line. Below it, a 12-hour tide graph (now ±6h) plots the height curve and marks each high and low with its time. Tap −6h / +6h on the phone to scrub the window; if it crosses into another day the e-ink says so. Tides come from the WorldTides API (set a free 'worldtides' API key as a secret); sunrise/sunset and moon phase are computed device-side.",
       "category": "info",
-      "requires": { "permissions": ["location"], "secrets": [] },
+      "requires": { "permissions": ["location"], "secrets": ["worldtides"] },
       "files": {
         "py":       "apps/tide-sun/tide_sun.py",
-        "manifest": "apps/tide-sun/tide_sun.manifest.json"
+        "manifest": "apps/tide-sun/tide_sun.manifest.json",
+        "ui":       "apps/tide-sun/tide_sun.ui.json"
       },
-      "size_bytes": 6758
+      "size_bytes": 14194
     },
     {
       "name": "weather",

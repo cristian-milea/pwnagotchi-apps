@@ -1,14 +1,14 @@
 {
   "name": "tide-sun",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "cristian-milea",
-  "description": "Sunrise/sunset, tides, and moon phase.",
-  "requires": { "permissions": ["location"] },
+  "description": "Sunrise/sunset, moon, and a scrubbable tide graph.",
+  "requires": { "permissions": ["location"], "secrets": ["worldtides"] },
   "data_source": {
     "type": "http",
     "method": "GET",
-    "url": "https://api.open-meteo.com/v1/forecast?latitude={{location.lat}}&longitude={{location.lon}}&daily=sunrise,sunset&forecast_days=1&timezone=auto",
-    "needs": ["location"]
+    "url": "https://www.worldtides.info/api/v3?heights&extremes&lat={{location.lat}}&lon={{location.lon}}&start={{state.tide_start}}&length=259200&step=1800&key={{secret.worldtides}}",
+    "needs": ["location", "secret:worldtides"]
   },
   "schema_version": 1
 }

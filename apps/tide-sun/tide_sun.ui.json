@@ -1,0 +1,44 @@
+{
+  "type": "column",
+  "padding": 16,
+  "spacing": 10,
+  "children": [
+    { "type": "text", "value": "Tide & Sun", "style": "headline" },
+    { "type": "text", "style": "caption",
+      "value": "The tide curve, sun and moon live on the e-ink. The phone scrubs the view." },
+    { "type": "text", "style": "caption",
+      "value": "Tides need a free WorldTides API key — set the 'worldtides' secret in App data." },
+
+    { "type": "divider" },
+
+    { "type": "text", "value": "Shift the 12h window", "style": "title" },
+    { "type": "row", "spacing": 12, "align": "center", "children": [
+      { "type": "button", "label": "−6h", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "shift", "delta": -6 } } },
+      { "type": "button", "label": "Now", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "reset" } } },
+      { "type": "button", "label": "+6h", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "shift", "delta": 6 } } }
+    ] },
+
+    { "type": "state_text", "binding": "offset_label", "default": "now",
+      "format": "View: {}", "style": "body" },
+    { "type": "state_text", "binding": "day_note", "default": "today",
+      "format": "Day: {}", "style": "caption" },
+    { "type": "state_text", "binding": "window_label", "default": "—",
+      "format": "Window: {}", "style": "caption" },
+    { "type": "state_text", "binding": "next_event", "default": "—",
+      "format": "Next tide: {}", "style": "caption" },
+
+    { "type": "divider" },
+
+    { "type": "row", "spacing": 12, "children": [
+      { "type": "state_text", "binding": "sunrise", "default": "--:--",
+        "format": "Sunrise {}", "style": "caption" },
+      { "type": "state_text", "binding": "sunset", "default": "--:--",
+        "format": "Sunset {}", "style": "caption" }
+    ] },
+    { "type": "state_text", "binding": "moon_phase", "default": "",
+      "format": "Moon: {}", "style": "caption" }
+  ]
+}
