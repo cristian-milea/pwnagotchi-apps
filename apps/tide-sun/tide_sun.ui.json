@@ -5,30 +5,33 @@
   "children": [
     { "type": "text", "value": "Tide & Sun", "style": "headline" },
     { "type": "text", "style": "caption",
-      "value": "The tide curve, sun and moon live on the e-ink. The phone scrubs the view." },
-    { "type": "text", "style": "caption",
-      "value": "Tides need a free WorldTides API key — set the 'worldtides' secret in App data." },
+      "value": "The tide curve, sun and moon live on the e-ink. The phone steps through the tides." },
 
     { "type": "divider" },
 
-    { "type": "text", "value": "Shift the 12h window", "style": "title" },
+    { "type": "text", "value": "Step through the tides", "style": "title" },
     { "type": "row", "spacing": 12, "align": "center", "children": [
-      { "type": "button", "label": "−6h", "style": "secondary",
-        "action": { "type": "push", "payload": { "action": "shift", "delta": -6 } } },
+      { "type": "button", "label": "◀ Prev", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "prev" } } },
       { "type": "button", "label": "Now", "style": "secondary",
         "action": { "type": "push", "payload": { "action": "reset" } } },
-      { "type": "button", "label": "+6h", "style": "secondary",
-        "action": { "type": "push", "payload": { "action": "shift", "delta": 6 } } }
+      { "type": "button", "label": "Next ▶", "style": "secondary",
+        "action": { "type": "push", "payload": { "action": "next" } } }
     ] },
 
-    { "type": "state_text", "binding": "offset_label", "default": "now",
-      "format": "View: {}", "style": "body" },
+    { "type": "state_text", "binding": "window_label", "default": "—",
+      "format": "Showing: {}", "style": "body" },
     { "type": "state_text", "binding": "day_note", "default": "today",
       "format": "Day: {}", "style": "caption" },
-    { "type": "state_text", "binding": "window_label", "default": "—",
-      "format": "Window: {}", "style": "caption" },
     { "type": "state_text", "binding": "next_event", "default": "—",
       "format": "Next tide: {}", "style": "caption" },
+
+    { "type": "divider" },
+
+    { "type": "state_text", "binding": "cache_status", "default": "No tide data — tap Sync",
+      "style": "body" },
+    { "type": "text", "style": "caption",
+      "value": "Tides use the WorldTides API — set a free 'worldtides' API key in App data. One sync pulls 7 days for ~1 credit (100 free/month), so this app is manual-sync: tap Sync only when the data runs low." },
 
     { "type": "divider" },
 

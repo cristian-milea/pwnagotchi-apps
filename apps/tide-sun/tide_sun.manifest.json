@@ -1,14 +1,16 @@
 {
   "name": "tide-sun",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "author": "cristian-milea",
-  "description": "Sunrise/sunset, moon, and a scrubbable tide graph.",
+  "description": "Sunrise/sunset, moon, and a cached next-tides graph.",
   "requires": { "permissions": ["location"], "secrets": ["worldtides"] },
   "data_source": {
     "type": "http",
     "method": "GET",
-    "url": "https://www.worldtides.info/api/v3?heights&extremes&lat={{location.lat}}&lon={{location.lon}}&start={{state.tide_start}}&length=259200&step=1800&key={{secret.worldtides}}",
-    "needs": ["location", "secret:worldtides"]
+    "url": "https://www.worldtides.info/api/v3?heights&lat={{location.lat}}&lon={{location.lon}}&start={{state.tide_start}}&length=604800&step=1800&key={{secret.worldtides}}",
+    "needs": ["location", "secret:worldtides"],
+    "auto_sync": false,
+    "min_sync_seconds": 518400
   },
   "schema_version": 1
 }

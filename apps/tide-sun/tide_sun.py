@@ -4,21 +4,34 @@
 # `data_source`). On Sync the phone GETs that URL and POSTs the envelope
 #   {"location": {"lat":.., "lon":.., "label":..} | null,
 #    "fetched":  <raw WorldTides response> | null}
-# `fetched` carries `heights` (a height curve) and `extremes` (high/low
-# markers). Sunrise/sunset are computed device-side from the location with
-# the standard sunrise equation; moon phase via a Conway approximation.
-# WorldTides needs a free API key, supplied as the `worldtides` secret.
 #
-# The phone can also push view controls (no re-fetch):
-#   {"action": "shift", "delta": +6 | -6}   shift the 12h window by hours
-#   {"action": "reset"}                      re-centre on "now"
+# Credit budget (free tier = 100/month): one call asks for 7 days of `heights`
+# at 30-min steps, which WorldTides bills as a single credit. We DON'T ask for
+# `extremes` — the high/low turning points are computed device-side from the
+# height curve. The 7-day curve is cached on disk and survives restarts, so the
+# phone only needs to sync about once a week (the manifest declares the app as
+# manual-sync / weekly via data_source.auto_sync + min_sync_seconds).
+#
+# Times are shown in the *location's* local time, derived from longitude
+# (round(lon/15)h). This is solar-zone time: exact for non-DST zones (the
+# device clock is irrelevant) but can be ~1h off where DST / political borders
+# apply.
+#
+# Sunrise/sunset are computed device-side (sunrise equation); moon phase via a
+# Conway approximation. The phone can also push view controls (no re-fetch):
+#   {"action": "next" | "prev"}   jump the window to the next/prev tide
+#   {"action": "reset"}            re-centre on "now"
 
+import json
 import math
+import os
 import time
 from datetime import datetime, timezone
 
 from PIL import ImageFont
 
+
+STATE_PATH = "/etc/pwnagotchi/tide_sun.state.json"
 
 MOON_PHASES = [
     "New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous",
@@ -27,23 +40,51 @@ MOON_PHASES = [
 SYNODIC_MONTH = 29.530588853  # days
 KNOWN_NEW_MOON_EPOCH = 1737374400  # 2025-01-20 12:00 UTC (a known new moon)
 
-WINDOW_HALF_H = 6           # graph spans now±6h => a 12h window
-MAX_OFFSET_H = 48           # how far the phone may scrub either way
-TIDE_BACK_SECONDS = 86400   # how far before "now" we ask WorldTides to start
-ROW1_FRAC = 0.35            # sun/moon strip; the graph gets the rest
+SHOWN_EXTREMES = 3        # how many high/low markers the graph fits
+WINDOW_PAD = 2700         # 45 min of breathing room each side of the markers
+ROW1_FRAC = 0.35          # sun/moon strip; the graph gets the rest
 
 
-def _fmt_clock(epoch):
-    """Unix epoch -> local HH:MM."""
+def _load_state():
+    try:
+        with open(STATE_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_state(state):
+    try:
+        os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+        tmp = STATE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, STATE_PATH)
+    except Exception:
+        pass
+
+
+def _tz_offset(loc):
+    """Location's UTC offset in seconds, from longitude (solar zone)."""
+    lon = (loc or {}).get("lon")
+    if not isinstance(lon, (int, float)):
+        return 0
+    return int(round(lon / 15.0)) * 3600
+
+
+def _shift(epoch, off):
+    return datetime.fromtimestamp(epoch + off, tz=timezone.utc)
+
+
+def _fmt_clock(epoch, off):
     if epoch is None:
         return "--:--"
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone().strftime("%H:%M")
+    return _shift(epoch, off).strftime("%H:%M")
 
 
 def _moon_phase(now_epoch):
     """Return (phase_name, illumination 0..1, waxing bool) using a Conway
-    approximation against a known new-moon epoch. Accurate enough for a
-    label on an e-ink clock."""
+    approximation against a known new-moon epoch."""
     age = ((now_epoch - KNOWN_NEW_MOON_EPOCH) / 86400.0) % SYNODIC_MONTH
     if age < 0:
         age += SYNODIC_MONTH
@@ -53,9 +94,8 @@ def _moon_phase(now_epoch):
 
 
 def _sun_times(lat, lon, year, month, day):
-    """Standard sunrise equation (Wikipedia). Returns (sunrise_epoch,
-    sunset_epoch) in unix UTC seconds, or (None, None) for polar day/night
-    or bad input. lon east-positive."""
+    """Standard sunrise equation. Returns (sunrise_epoch, sunset_epoch) in unix
+    UTC seconds, or (None, None) for polar day/night or bad input."""
     try:
         a = (14 - month) // 12
         y = year + 4800 - a
@@ -72,7 +112,7 @@ def _sun_times(lat, lon, year, month, day):
         latr = math.radians(lat)
         cos_w = (math.sin(math.radians(-0.83)) - math.sin(latr) * sin_dec) / (math.cos(latr) * cos_dec)
         if cos_w > 1 or cos_w < -1:
-            return None, None  # sun never rises / never sets here today
+            return None, None
         w = math.degrees(math.acos(cos_w)) / 360.0
 
         def jd_to_unix(jd):
@@ -83,24 +123,48 @@ def _sun_times(lat, lon, year, month, day):
         return None, None
 
 
-def _tide_points(fetched):
-    """Pull (dt, height) curve points and (dt, height, type) extremes out of
-    a WorldTides response. Returns (heights, extremes), both sorted by dt."""
-    heights, extremes = [], []
-    if not isinstance(fetched, dict):
-        return heights, extremes
-    for h in fetched.get("heights") or []:
-        dt, ht = h.get("dt"), h.get("height")
-        if isinstance(dt, (int, float)) and isinstance(ht, (int, float)):
-            heights.append((int(dt), float(ht)))
-    for e in fetched.get("extremes") or []:
-        dt, ht = e.get("dt"), e.get("height")
-        typ = (e.get("type") or "").lower()
-        if isinstance(dt, (int, float)) and isinstance(ht, (int, float)):
-            extremes.append((int(dt), float(ht), "H" if typ.startswith("h") else "L"))
-    heights.sort(key=lambda p: p[0])
-    extremes.sort(key=lambda p: p[0])
-    return heights, extremes
+def _parse_heights(fetched):
+    """Pull a sorted (dt, height) curve out of a WorldTides response."""
+    pts = []
+    if isinstance(fetched, dict):
+        for h in fetched.get("heights") or []:
+            dt, ht = h.get("dt"), h.get("height")
+            if isinstance(dt, (int, float)) and isinstance(ht, (int, float)):
+                pts.append((int(dt), float(ht)))
+    pts.sort(key=lambda p: p[0])
+    return pts
+
+
+def _extremes_from_heights(heights):
+    """Find high/low turning points in the curve, refining each to sub-sample
+    accuracy with a parabolic vertex estimate. Returns sorted
+    [(dt, height, "H"/"L")]."""
+    n = len(heights)
+    out = []
+    for i in range(1, n - 1):
+        dt0, y0 = heights[i - 1]
+        dt1, y1 = heights[i]
+        _, y2 = heights[i + 1]
+        d_prev, d_next = y1 - y0, y2 - y1
+        is_max = d_prev >= 0 and d_next <= 0 and (d_prev > 0 or d_next < 0)
+        is_min = d_prev <= 0 and d_next >= 0 and (d_prev < 0 or d_next > 0)
+        if not (is_max or is_min):
+            continue
+        denom = y0 - 2 * y1 + y2
+        p = max(-0.5, min(0.5, 0.5 * (y0 - y2) / denom)) if denom else 0.0
+        rdt = int(round(dt1 + p * (dt1 - dt0)))
+        rht = y1 - 0.25 * (y0 - y2) * p
+        out.append((rdt, rht, "H" if is_max else "L"))
+    # Collapse a flat crest sampled as two equal points into one marker.
+    ded = []
+    for e in out:
+        if ded and ded[-1][2] == e[2] and abs(e[0] - ded[-1][0]) < 3600:
+            better = (e[2] == "H" and e[1] > ded[-1][1]) or (e[2] == "L" and e[1] < ded[-1][1])
+            if better:
+                ded[-1] = e
+        else:
+            ded.append(e)
+    return ded
 
 
 def _draw_moon(draw, cx, cy, r, illum, waxing):
@@ -122,126 +186,172 @@ def _draw_moon(draw, cx, cy, r, illum, waxing):
 class TideSun:
     name = "tide-sun"
     icon = "TS"
-    version = "1.4.0"
+    version = "1.5.0"
     interval_seconds = 60
 
     def __init__(self):
-        self._loc = {}          # last location dict
-        self._heights = []       # [(dt, height)]
-        self._extremes = []      # [(dt, height, "H"/"L")]
-        self._offset_h = 0       # window shift in hours
+        s = _load_state()
+        self._loc = s.get("loc") or {}
+        self._heights = [tuple(p) for p in s.get("heights") or []]
+        self._extremes = [tuple(e) for e in s.get("extremes") or []]
+        self._fetched_at = s.get("fetched_at") or 0
+        self._anchor = 0
+        self._reset_anchor()
 
-    # ---- derived view helpers ----
-    def _center(self):
-        return time.time() + self._offset_h * 3600
-
-    def _day_note(self):
-        center_local = datetime.fromtimestamp(self._center(), tz=timezone.utc).astimezone()
-        today = datetime.now().astimezone()
-        ddays = (center_local.date() - today.date()).days
-        if ddays == 0:
-            return "today"
-        return "%s %d %+dd" % (center_local.strftime("%a"), center_local.day, ddays)
-
-    def _next_event(self):
+    # ---- view state ----
+    def _reset_anchor(self):
+        """Anchor the window on the last tide at/just before now, leaving room
+        for SHOWN_EXTREMES markers."""
         now = time.time()
-        for dt, ht, typ in self._extremes:
-            if dt >= now:
-                label = "High" if typ == "H" else "Low"
-                return "%s %s (%.1fm)" % (label, _fmt_clock(dt), ht)
-        return "—"
+        idx = 0
+        for i, (dt, _, _) in enumerate(self._extremes):
+            if dt <= now:
+                idx = i
+        self._anchor = max(0, min(idx, max(0, len(self._extremes) - SHOWN_EXTREMES)))
+
+    def _shown(self):
+        return self._extremes[self._anchor:self._anchor + SHOWN_EXTREMES]
+
+    def _window(self):
+        shown = self._shown()
+        if not shown:
+            now = time.time()
+            return now, now + 12 * 3600, shown
+        t0 = shown[0][0] - WINDOW_PAD
+        t1 = shown[-1][0] + WINDOW_PAD
+        return t0, (t1 if t1 > t0 else t0 + 3600), shown
+
+    def _persist(self):
+        _save_state({
+            "loc": self._loc,
+            "heights": [list(p) for p in self._heights],
+            "extremes": [list(e) for e in self._extremes],
+            "fetched_at": self._fetched_at,
+        })
 
     # ---- host hooks ----
     def on_data(self, payload):
         if not isinstance(payload, dict):
             return False
         action = payload.get("action")
-        if action == "shift":
-            try:
-                delta = int(payload.get("delta", 0))
-            except (TypeError, ValueError):
-                delta = 0
-            self._offset_h = max(-MAX_OFFSET_H, min(MAX_OFFSET_H, self._offset_h + delta))
+        if action in ("next", "prev", "reset"):
+            top = max(0, len(self._extremes) - SHOWN_EXTREMES)
+            if action == "next":
+                self._anchor = min(self._anchor + 1, top)
+            elif action == "prev":
+                self._anchor = max(self._anchor - 1, 0)
+            else:
+                self._reset_anchor()
             return True
-        if action == "reset":
-            self._offset_h = 0
-            return True
+
         # Otherwise it's the sync envelope: {location, fetched}.
+        heights = _parse_heights(payload.get("fetched"))
+        if not heights:
+            return False  # failed/empty fetch — keep the cached curve
         raw_loc = payload.get("location")
         self._loc = raw_loc if isinstance(raw_loc, dict) else {}
-        self._heights, self._extremes = _tide_points(payload.get("fetched"))
-        self._offset_h = 0  # fresh data re-centres on now
+        self._heights = heights
+        self._extremes = _extremes_from_heights(heights)
+        self._fetched_at = int(time.time())
+        self._reset_anchor()
+        self._persist()
         return True
 
+    def _day_note(self, ref_epoch, off, now):
+        ddays = (_shift(ref_epoch, off).date() - _shift(now, off).date()).days
+        if ddays == 0:
+            return "today"
+        return "%s %d %+dd" % (_shift(ref_epoch, off).strftime("%a"),
+                               _shift(ref_epoch, off).day, ddays)
+
     def published_state(self):
-        now_local = datetime.now().astimezone()
-        sr, ss = (None, None)
-        if isinstance(self._loc.get("lat"), (int, float)) and \
-           isinstance(self._loc.get("lon"), (int, float)):
-            sr, ss = _sun_times(self._loc["lat"], self._loc["lon"],
-                                now_local.year, now_local.month, now_local.day)
-        phase, illum, _ = _moon_phase(int(time.time()))
-        t0, t1 = self._center() - WINDOW_HALF_H * 3600, self._center() + WINDOW_HALF_H * 3600
+        now = time.time()
+        off = _tz_offset(self._loc)
+        lat, lon = self._loc.get("lat"), self._loc.get("lon")
+        sr = ss = None
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            ld = _shift(now, off)
+            sr, ss = _sun_times(lat, lon, ld.year, ld.month, ld.day)
+        phase, illum, _ = _moon_phase(int(now))
+
+        t0, t1, shown = self._window()
+        nxt = next(((dt, ht, ty) for dt, ht, ty in self._extremes if dt >= now), None)
+        days_left = round((self._heights[-1][0] - now) / 86400.0, 1) if self._heights else 0.0
+        if not self._heights:
+            cache_status = "No tide data — tap Sync"
+        elif days_left <= 0.5:
+            cache_status = "Tide data spent — Sync soon"
+        else:
+            cache_status = "Tide data cached: %.1f days left" % days_left
+
         return {
             "location":     self._loc.get("label") or "",
-            "sunrise":      _fmt_clock(sr),
-            "sunset":       _fmt_clock(ss),
+            "sunrise":      _fmt_clock(sr, off),
+            "sunset":       _fmt_clock(ss, off),
             "moon_phase":   "%s %d%%" % (phase, int(illum * 100)),
-            "offset_label": "now" if self._offset_h == 0 else "now %+dh" % self._offset_h,
-            "day_note":     self._day_note(),
-            "window_label": "%s – %s" % (_fmt_clock(t0), _fmt_clock(t1)),
-            "next_event":   self._next_event(),
+            "window_label": "%s → %s" % (_fmt_clock(t0, off), _fmt_clock(t1, off)),
+            "day_note":     self._day_note((t0 + t1) // 2, off, now),
+            "next_event":   ("%s %s (%.1fm)" % ("High" if nxt[2] == "H" else "Low",
+                                                _fmt_clock(nxt[0], off), nxt[1])) if nxt else "—",
+            "cache_status": cache_status,
             "tide_count":   len(self._extremes),
-            "tide_start":   int(time.time() - TIDE_BACK_SECONDS),
+            "tide_start":   int(now - 43200),  # WorldTides start: now − 12h
         }
 
     # ---- render ----
     def render(self, draw, w, h):
         small = ImageFont.truetype("DejaVuSansMono-Bold", 9)
         tiny = ImageFont.truetype("DejaVuSansMono-Bold", 8)
+        off = _tz_offset(self._loc)
 
         row1_h = int(h * ROW1_FRAC)
-        self._render_sun_moon(draw, w, row1_h, small)
+        self._render_sun_moon(draw, w, row1_h, small, off)
         draw.line((2, row1_h, w - 2, row1_h), fill=0)
-        self._render_tides(draw, w, h, row1_h, small, tiny)
+        self._render_tides(draw, w, h, row1_h, small, tiny, off)
 
-    def _render_sun_moon(self, draw, w, row1_h, font):
-        s = self.published_state()
-        line = "Sunrise %s   Sunset %s" % (s["sunrise"], s["sunset"])
+    def _render_sun_moon(self, draw, w, row1_h, font, off):
+        now = int(time.time())
+        lat, lon = self._loc.get("lat"), self._loc.get("lon")
+        sr = ss = None
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            ld = _shift(now, off)
+            sr, ss = _sun_times(lat, lon, ld.year, ld.month, ld.day)
         ty = max(1, (row1_h - 11) // 2)
-        draw.text((3, ty), line, font=font, fill=0)
+        draw.text((3, ty), "Sunrise %s  Sunset %s  Moon" %
+                  (_fmt_clock(sr, off), _fmt_clock(ss, off)), font=font, fill=0)
 
-        # Moon disc + % on the right edge of the strip.
-        _, illum, waxing = _moon_phase(int(time.time()))
+        # Moon disc + illum% hard against the right edge.
+        _, illum, waxing = _moon_phase(now)
         pct = "%d%%" % int(illum * 100)
         pct_w = int(draw.textlength(pct, font=font))
         r = 5
         cy = row1_h // 2
-        cx = w - pct_w - 6 - r
-        _draw_moon(draw, cx, cy, r, illum, waxing)
+        _draw_moon(draw, w - pct_w - 7 - r, cy, r, illum, waxing)
         draw.text((w - pct_w - 3, ty), pct, font=font, fill=0)
 
-    def _render_tides(self, draw, w, h, top, font, tiny):
-        center = self._center()
-        t0, t1 = center - WINDOW_HALF_H * 3600, center + WINDOW_HALF_H * 3600
+    def _render_tides(self, draw, w, h, top, font, tiny, off):
+        now = time.time()
+        t0, t1, shown = self._window()
 
-        # Header: left = view offset, right = day note.
-        offset_label = "TIDE  now" if self._offset_h == 0 else "TIDE  now%+dh" % self._offset_h
-        draw.text((3, top + 2), offset_label, font=tiny, fill=0)
-        note = self._day_note()
+        # Header: left = which tides, right = day note.
+        draw.text((3, top + 2), "TIDE", font=tiny, fill=0)
+        note = self._day_note((t0 + t1) // 2, off, now)
         nw = int(draw.textlength(note, font=tiny))
         draw.text((w - nw - 3, top + 2), note, font=tiny, fill=0)
 
         px0, px1 = 4, w - 4
-        py_top, py_bot = top + 13, h - 11
+        py_top, py_bot = top + 24, h - 11   # extra top room so H labels clear the header
+
+        if not shown:
+            draw.text((px0, py_top), "no tide data — tap Sync", font=font, fill=0)
+            return
 
         def xpos(dt):
             return px0 + (dt - t0) / (t1 - t0) * (px1 - px0)
 
         vis = [(dt, ht) for dt, ht in self._heights if t0 <= dt <= t1]
         if len(vis) < 2:
-            draw.text((px0, py_top + 8), "no tide data in range — Sync",
-                      font=font, fill=0)
+            draw.text((px0, py_top), "no tide data — tap Sync", font=font, fill=0)
             return
 
         hmin = min(ht for _, ht in vis)
@@ -251,34 +361,29 @@ class TideSun:
         def ypos(ht):
             return py_bot - (ht - hmin) / span * (py_bot - py_top)
 
-        # Baseline + the height curve.
         draw.line((px0, py_bot, px1, py_bot), fill=0)
-        pts = [(xpos(dt), ypos(ht)) for dt, ht in vis]
-        draw.line(pts, fill=0, width=1)
+        draw.line([(xpos(dt), ypos(ht)) for dt, ht in vis], fill=0, width=1)
 
-        # "now" marker (dashed vertical) when now is inside the window.
-        now = time.time()
         if t0 <= now <= t1:
             nx = int(xpos(now))
             for yy in range(py_top, py_bot, 4):
                 draw.line((nx, yy, nx, yy + 2), fill=0)
 
-        # High/low markers within the window.
-        for dt, ht, typ in self._extremes:
-            if not (t0 <= dt <= t1):
-                continue
+        # The SHOWN_EXTREMES markers, with a clear gap between dot and label.
+        for dt, ht, typ in shown:
             ex, ey = int(xpos(dt)), int(ypos(ht))
             draw.ellipse((ex - 2, ey - 2, ex + 2, ey + 2), fill=0)
-            label = "%s %s" % (typ, _fmt_clock(dt))
+            label = "%s %s" % (typ, _fmt_clock(dt, off))
             lw = int(draw.textlength(label, font=tiny))
             lx = max(px0, min(ex - lw // 2, px1 - lw))
-            ly = ey - 11 if typ == "H" else ey + 4
-            ly = max(py_top, min(ly, py_bot - 9))
+            # Always label above the dot — lows sit on the baseline, so a label
+            # below them would collide with the x-axis clock row.
+            ly = max(top + 11, ey - 13)
             draw.text((lx, ly), label, font=tiny, fill=0)
 
         # X-axis clock labels: window start / centre / end.
-        for frac, dt in ((0.0, t0), (0.5, center), (1.0, t1)):
-            lbl = _fmt_clock(dt)
+        for frac, dt in ((0.0, t0), (0.5, (t0 + t1) / 2), (1.0, t1)):
+            lbl = _fmt_clock(dt, off)
             lw = int(draw.textlength(lbl, font=tiny))
             lx = int(px0 + frac * (px1 - px0))
             lx = max(px0, min(lx - lw // 2, px1 - lw))
